@@ -1,0 +1,41 @@
+[INFO] Generating build script...
+[INFO] Generating build script completed, took 263ms
+
+[INFO] Precompiling build script......
+[INFO] Precompiling build script... completed, took 3.0s
+
+[INFO] Initializing inputs
+[INFO] Building new asset graph...
+[INFO] Building new asset graph completed, took 1.3s
+
+[INFO] Checking for unexpected pre-existing outputs....
+[INFO] Deleting 1 declared outputs which already existed on disk.
+[INFO] Checking for unexpected pre-existing outputs. completed, took 2ms
+
+[INFO] Running build...
+[WARNING] freezed on test/cm_test.dart:
+Your current `analyzer` version may not fully support your current SDK version.
+
+Analyzer language version: 3.4.0
+SDK language version: 3.11.0
+
+Please update to the latest `analyzer` version (12.1.0) by running
+`flutter packages upgrade`.
+
+If you are not getting the latest version by running the above command, you
+can try adding a constraint like the following to your pubspec to start
+diagnosing why you can't get the latest version:
+
+dev_dependencies:
+  analyzer: ^12.1.0
+
+[INFO] 1.7s elapsed, 127/131 actions completed.
+[INFO] 2.9s elapsed, 130/131 actions completed.
+[INFO] 4.4s elapsed, 130/131 actions completed.
+[INFO] Running build completed, took 4.4s
+
+[INFO] Caching finalized dependency graph...
+[INFO] Caching finalized dependency graph completed, took 66ms
+
+[INFO] Succeeded after 4.5s with 10 outputs (140 actions)
+

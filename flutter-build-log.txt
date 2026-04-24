@@ -1,0 +1,29 @@
+Package file_picker:linux references file_picker:linux as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: linux: default_package: file_picker` or add an inline implementation to file_picker via `platforms: linux:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:macos references file_picker:macos as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: macos: default_package: file_picker` or add an inline implementation to file_picker via `platforms: macos:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:windows references file_picker:windows as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: windows: default_package: file_picker` or add an inline implementation to file_picker via `platforms: windows:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:linux references file_picker:linux as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: linux: default_package: file_picker` or add an inline implementation to file_picker via `platforms: linux:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:macos references file_picker:macos as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: macos: default_package: file_picker` or add an inline implementation to file_picker via `platforms: macos:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:windows references file_picker:windows as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: windows: default_package: file_picker` or add an inline implementation to file_picker via `platforms: windows:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:linux references file_picker:linux as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: linux: default_package: file_picker` or add an inline implementation to file_picker via `platforms: linux:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:macos references file_picker:macos as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: macos: default_package: file_picker` or add an inline implementation to file_picker via `platforms: macos:` `pluginClass` or `dartPluginClass`.
+
+Package file_picker:windows references file_picker:windows as the default plugin, but it does not provide an inline implementation.
+Ask the maintainers of file_picker to either avoid referencing a default implementation via `platforms: windows: default_package: file_picker` or add an inline implementation to file_picker via `platforms: windows:` `pluginClass` or `dartPluginClass`.
+
+Building Windows application...                                   203.0s
+√ Built build\windows\x64\runner\Release\rustdesk.exe

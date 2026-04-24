@@ -1,0 +1,15 @@
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.GeneratedMSBuildEditorConfig.editorconfig
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.AssemblyInfoInputs.cache
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.AssemblyInfo.cs
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.csproj.CoreCompileInputs.cache
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.sourcelink.json
+D:\ideas\rustdesk\tmp_test\bin\Release\net8.0\CaretMon.exe
+D:\ideas\rustdesk\tmp_test\bin\Release\net8.0\CaretMon.deps.json
+D:\ideas\rustdesk\tmp_test\bin\Release\net8.0\CaretMon.runtimeconfig.json
+D:\ideas\rustdesk\tmp_test\bin\Release\net8.0\CaretMon.dll
+D:\ideas\rustdesk\tmp_test\bin\Release\net8.0\CaretMon.pdb
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.dll
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\refint\CaretMon.dll
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.pdb
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\CaretMon.genruntimeconfig.cache
+D:\ideas\rustdesk\tmp_test\obj\Release\net8.0\ref\CaretMon.dll

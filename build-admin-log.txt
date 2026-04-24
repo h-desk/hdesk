@@ -1,0 +1,196 @@
+[1/3] Generating FRB bindings...
+2026/04/18 07:51:18 [WARN] Skipping unresolvable module inline (tried \\?\D:\ideas\rustdesk\src\inline.rs, \\?\D:\ideas\rustdesk\src\inline\mod.rs, \\?\D:\ideas\rustdesk\src\ui\inline.rs, \\?\D:\ideas\rustdesk\src\ui\inline\mod.rs, )
+2026/04/18 07:51:18 [WARN] Skipping unresolvable module io (tried \\?\D:\ideas\rustdesk\src\io.rs, \\?\D:\ideas\rustdesk\src\io\mod.rs, \\?\D:\ideas\rustdesk\src\bridge_generated\io.rs, \\?\D:\ideas\rustdesk\src\bridge_generated\io\mod.rs, )
+2026/04/18 07:51:19 [INFO] Phase: Validate config(s)
+2026/04/18 07:51:19 [INFO] Picked config: Opts { rust_input_path: "D:\\ideas\\rustdesk\\src\\flutter_ffi.rs", dart_output_path: "D:\\ideas\\rustdesk\\flutter\\lib\\generated_bridge.dart", dart_decl_output_path: None, c_output_path: ["C:\\Users\\keke.qiu\\AppData\\Local\\Temp\\.tmpwtcJdl.h"], rust_crate_dir: "D:\\ideas\\rustdesk", rust_output_path: "D:\\ideas\\rustdesk\\src\\bridge_generated.rs", class_name: "Rustdesk", dart_format_line_length: 80, dart_enums_style: false, skip_add_mod_to_lib: false, llvm_path: ["D:\\software\\DevEco Studio\\sdk\\default\\openharmony\\native\\llvm"], llvm_compiler_opts: "", manifest_path: "D:\\ideas\\rustdesk\\Cargo.toml", dart_root: Some("D:\\ideas\\rustdesk\\flutter"), build_runner: true, block_index: BlockIndex(0), skip_deps_check: true, wasm_enabled: false, inline_rust: false, bridge_in_method: true, extra_headers: "", dart3: true, keep_going: false }
+2026/04/18 07:51:19 [INFO] Phase: Parse source code to AST, then to IR
+2026/04/18 07:51:21 [WARN] Skipping unresolvable module inline (tried \\?\D:\ideas\rustdesk\src\inline.rs, \\?\D:\ideas\rustdesk\src\inline\mod.rs, \\?\D:\ideas\rustdesk\src\ui\inline.rs, \\?\D:\ideas\rustdesk\src\ui\inline\mod.rs, )
+2026/04/18 07:51:21 [WARN] Skipping unresolvable module io (tried \\?\D:\ideas\rustdesk\src\io.rs, \\?\D:\ideas\rustdesk\src\io\mod.rs, \\?\D:\ideas\rustdesk\src\bridge_generated\io.rs, \\?\D:\ideas\rustdesk\src\bridge_generated\io\mod.rs, )
+2026/04/18 07:51:21 [INFO] Phase: Transform IR
+2026/04/18 07:51:21 [INFO] Phase: Generate Rust code
+2026/04/18 07:51:22 [INFO] Phase: Generate Dart code
+Flutter 3.41.2 • channel stable • https://gitee.com/mirrors/Flutter.git
+Framework • revision 90673a4eef (8 weeks ago) • 2026-02-18 13:54:59 -0800
+Engine • hash d96704abcce17ff165bbef9d77123407ef961017 (revision 6c0baaebf7) (1 months ago) • 2026-02-18 19:22:23.000Z
+Tools • Dart 3.11.0 • DevTools 2.54.1
+2026/04/18 07:51:25 [INFO] Phase: Generating Dart bindings for Rust
+Running in Directory: 'D:\ideas\rustdesk\flutter'
+Input Headers: [C:\Users\keke.qiu\AppData\Local\Temp\.tmpJLHcQw.h]
+[SEVERE] : Header C:\Users\keke.qiu\AppData\Local\Temp\.tmpJLHcQw.h: Total errors/warnings: 1.
+[SEVERE] :     C:\Users\keke.qiu\AppData\Local\Temp\.tmpJLHcQw.h:1:10: fatal error: 'stdbool.h' file not found [Lexical or Preprocessor Issue]
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: DartCObject, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct DartCObject, usr: c:@S@DartCObject
+[WARNING]: No definition found for declaration - (Cursor) spelling: DartCObject, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct DartCObject, usr: c:@S@DartCObject
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: _Dart_Handle, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct _Dart_Handle, usr: c:@S@_Dart_Handle
+[WARNING]: No definition found for declaration - (Cursor) spelling: DartCObject, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct DartCObject, usr: c:@S@DartCObject
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: No definition found for declaration - (Cursor) spelling: Display, kind: 2, kindSpelling: StructDecl, type: 105, typeSpelling: struct Display, usr: c:@S@Display
+[WARNING]: Generated declaration '_Dart_Handle' start's with '_' and therefore will be private.
+Finished, Bindings generated in C:\Users\keke.qiu\AppData\Local\Temp\.tmpTYTFhM
+the path is "C:\\Users\\keke.qiu\\AppData\\Local\\Temp\\.tmpwtcJdl.h"
+2026/04/18 07:51:33 [INFO] Phase: Running build_runner
+2026/04/18 07:51:33 [INFO] Running build_runner at D:\ideas\rustdesk\flutter
+[INFO] Generating build script...
+[INFO] Generating build script completed, took 358ms
+
+[WARNING] Invalidated precompiled build script due to core package update
+[INFO] Precompiling build script......
+[INFO] Precompiling build script... completed, took 1.6s
+
+[WARNING] Attempting to enable experiments `[class-modifiers]`, but the current SDK
+language version does not match your `analyzer` package language version:
+
+Analyzer language version: 3.4.0
+SDK language version: 3.11.0
+
+In order to use experiments you may need to upgrade or downgrade your
+`analyzer` package dependency such that its language version matches that of
+your current SDK, see https://github.com/dart-lang/build/issues/2685.
+
+Note that you may or may not have a direct dependency on the `analyzer`
+package in your `pubspec.yaml`, so you may have to add that. You can see your
+current version by running `pub deps`.
+
+[INFO] Initializing inputs
+[INFO] Reading cached asset graph...
+[WARNING] Throwing away cached asset graph because the enabled Dart language experiments changed:
+
+Previous value: 
+Current value: class-modifiers
+[INFO] Cleaning up outputs from previous builds....
+[INFO] Cleaning up outputs from previous builds. completed, took 172ms
+
+[INFO] Generating build script...
+[INFO] Generating build script completed, took 285ms
+
+[WARNING] Invalidated precompiled build script due to missing asset graph.
+[INFO] Precompiling build script......
+[INFO] Precompiling build script... completed, took 755ms
+
+[WARNING] Attempting to enable experiments `[class-modifiers]`, but the current SDK
+language version does not match your `analyzer` package language version:
+
+Analyzer language version: 3.4.0
+SDK language version: 3.11.0
+
+In order to use experiments you may need to upgrade or downgrade your
+`analyzer` package dependency such that its language version matches that of
+your current SDK, see https://github.com/dart-lang/build/issues/2685.
+
+Note that you may or may not have a direct dependency on the `analyzer`
+package in your `pubspec.yaml`, so you may have to add that. You can see your
+current version by running `pub deps`.
+
+[INFO] Initializing inputs
+[INFO] Building new asset graph...
+[INFO] Building new asset graph completed, took 2.9s
+
+[INFO] Checking for unexpected pre-existing outputs....
+[INFO] Checking for unexpected pre-existing outputs. completed, took 1ms
+
+[INFO] Running build...
+[INFO] 1.2s elapsed, 16/18 actions completed.
+[WARNING] freezed on lib/common/formatter/id_formatter.dart:
+Your current `analyzer` version may not fully support your current SDK version.
+
+Analyzer language version: 3.4.0
+SDK language version: 3.11.0
+
+Please update to the latest `analyzer` version (12.1.0) by running
+`flutter packages upgrade`.
+
+If you are not getting the latest version by running the above command, you
+can try adding a constraint like the following to your pubspec to start
+diagnosing why you can't get the latest version:
+
+dev_dependencies:
+  analyzer: ^12.1.0
+
+[INFO] 2.5s elapsed, 64/65 actions completed.
+[INFO] 3.6s elapsed, 130/131 actions completed.
+[INFO] 5.5s elapsed, 130/131 actions completed.
+[INFO] 7.1s elapsed, 130/131 actions completed.
+[INFO] 8.4s elapsed, 130/131 actions completed.
+[INFO] Running build completed, took 8.4s
+
+[INFO] Caching finalized dependency graph...
+[INFO] Caching finalized dependency graph completed, took 133ms
+
+[INFO] Succeeded after 8.5s with 10 outputs (140 actions)
+
+2026/04/18 07:52:06 [INFO] Phase: Formatting Dart code
+Formatted D:\\ideas\\rustdesk\\flutter\\lib\\generated_bridge.dart
+Formatted 2 files (1 changed) in 0.09 seconds.
+2026/04/18 07:52:10 [INFO] Success!
+2026/04/18 07:52:10 [INFO] Now go and use it :)
+[2/3] Regenerating freezed files via build_runner...
+[INFO] Generating build script...
+[INFO] Generating build script completed, took 351ms
+
+[WARNING] Invalidated precompiled build script due to core package update
+[INFO] Precompiling build script......
+[INFO] Precompiling build script... completed, took 774ms
+
+[INFO] Initializing inputs
+[INFO] Reading cached asset graph...
+[WARNING] Throwing away cached asset graph because the enabled Dart language experiments changed:
+
+Previous value: class-modifiers
+Current value: 
+[INFO] Cleaning up outputs from previous builds....
+[INFO] Cleaning up outputs from previous builds. completed, took 18ms
+
+[INFO] Generating build script...
+[INFO] Generating build script completed, took 154ms
+
+[WARNING] Invalidated precompiled build script due to missing asset graph.
+[INFO] Precompiling build script......
+[INFO] Precompiling build script... completed, took 856ms
+
+[INFO] Initializing inputs
+[INFO] Building new asset graph...
+[INFO] Building new asset graph completed, took 2.8s
+
+[INFO] Checking for unexpected pre-existing outputs....
+[INFO] Checking for unexpected pre-existing outputs. completed, took 1ms
+
+[INFO] Running build...
+[INFO] 1.1s elapsed, 16/17 actions completed.
+[WARNING] freezed on test/cm_test.dart:
+Your current `analyzer` version may not fully support your current SDK version.
+
+Analyzer language version: 3.4.0
+SDK language version: 3.11.0
+
+Please update to the latest `analyzer` version (12.1.0) by running
+`flutter packages upgrade`.
+
+If you are not getting the latest version by running the above command, you
+can try adding a constraint like the following to your pubspec to start
+diagnosing why you can't get the latest version:
+
+dev_dependencies:
+  analyzer: ^12.1.0
+
+[INFO] 2.3s elapsed, 64/76 actions completed.
+[INFO] 3.4s elapsed, 130/131 actions completed.
+[INFO] 5.3s elapsed, 130/131 actions completed.
+[INFO] 7.1s elapsed, 130/131 actions completed.
+[INFO] 8.2s elapsed, 130/131 actions completed.
+[INFO] Running build completed, took 8.2s
+
+[INFO] Caching finalized dependency graph...
+[INFO] Caching finalized dependency graph completed, took 131ms
+
+[INFO] Succeeded after 8.4s with 10 outputs (140 actions)
+
