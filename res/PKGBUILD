@@ -1,19 +1,19 @@
-pkgname=rustdesk
+pkgname=hdesk
 pkgver=1.4.6
 pkgrel=0
 epoch=
-pkgdesc=""
+pkgdesc="HDesk remote desktop client software."
 arch=('x86_64')
-url=""
+url="https://apps.yunjichuangzhi.cn/hdesk/index.html"
 license=('AGPL-3.0')
 groups=()
 depends=('gtk3' 'xdotool' 'libxcb' 'libxfixes' 'alsa-lib' 'libva' 'libappindicator-gtk3' 'pam' 'gst-plugins-base' 'gst-plugin-pipewire')
 makedepends=()
 checkdepends=()
 optdepends=()
-provides=()
-conflicts=()
-replaces=()
+provides=('rustdesk')
+conflicts=('rustdesk')
+replaces=('rustdesk')
 backup=()
 options=()
 install=pacman_install
@@ -23,13 +23,15 @@ md5sums=() #generate with 'makepkg -g'
 
 package() {
   if [[ ${FLUTTER} ]]; then
-	  mkdir -p "${pkgdir}/usr/share/rustdesk" && cp -r ${HBB}/flutter/build/linux/x64/release/bundle/* -t "${pkgdir}/usr/share/rustdesk"
+	  mkdir -p "${pkgdir}/usr/share/hdesk" && cp -r ${HBB}/flutter/build/linux/x64/release/bundle/* -t "${pkgdir}/usr/share/hdesk"
   fi
   mkdir -p "${pkgdir}/usr/bin"
-  pushd ${pkgdir} && ln -s /usr/share/rustdesk/rustdesk usr/bin/rustdesk && popd
-  install -Dm 644 $HBB/res/rustdesk.service -t "${pkgdir}/usr/share/rustdesk/files"
-  install -Dm 644 $HBB/res/rustdesk.desktop -t "${pkgdir}/usr/share/rustdesk/files"
-  install -Dm 644 $HBB/res/rustdesk-link.desktop -t "${pkgdir}/usr/share/rustdesk/files"
+  pushd ${pkgdir} && ln -s /usr/share/hdesk/rustdesk usr/bin/rustdesk && popd
+  install -Dm 644 $HBB/res/rustdesk.service "${pkgdir}/usr/share/hdesk/files/hdesk.service"
+  install -Dm 644 $HBB/res/rustdesk.desktop "${pkgdir}/usr/share/hdesk/files/rustdesk.desktop"
+  install -Dm 644 $HBB/res/rustdesk-link.desktop "${pkgdir}/usr/share/hdesk/files/rustdesk-link.desktop"
   install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/rustdesk.png"
   install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/rustdesk.svg"
+  install -Dm 644 $HBB/res/128x128@2x.png "${pkgdir}/usr/share/icons/hicolor/256x256/apps/hdesk.png"
+  install -Dm 644 $HBB/res/scalable.svg "${pkgdir}/usr/share/icons/hicolor/scalable/apps/hdesk.svg"
 }

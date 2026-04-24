@@ -1,10 +1,10 @@
 [Desktop Entry]
-Name=RustDesk
+Name=HDesk
 NoDisplay=true
 MimeType=x-scheme-handler/rustdesk;
 TryExec=rustdesk
 Exec=rustdesk %u
-Icon=rustdesk
+Icon=hdesk
 Terminal=false
 Type=Application
 StartupNotify=false

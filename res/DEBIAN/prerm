@@ -9,16 +9,21 @@ case $1 in
 		
 		if [ "systemd" == "${INITSYS}" ]; then
 
+			systemctl stop hdesk || true
+			systemctl disable hdesk || true
 			systemctl stop rustdesk || true
 			systemctl disable rustdesk || true
+			rm /etc/systemd/system/hdesk.service /usr/lib/systemd/system/hdesk.service || true
 			rm /etc/systemd/system/rustdesk.service /usr/lib/systemd/system/rustdesk.service || true
 			
 			# workaround temp dev build between 1.1.9 and 1.2.0
 			serverUser=$(ps -ef | grep -E 'rustdesk +--server' | grep -v 'sudo ' | awk '{print $1}' | head -1)
 			if [ "$serverUser" != "" ] && [ "$serverUser" != "root" ]
 			then
+				systemctl --machine=${serverUser}@.host --user stop hdesk >/dev/null 2>&1 || true
 				systemctl --machine=${serverUser}@.host --user stop rustdesk >/dev/null 2>&1 || true
 			fi
+			rm /usr/lib/systemd/user/hdesk.service >/dev/null 2>&1 || true
 			rm /usr/lib/systemd/user/rustdesk.service >/dev/null 2>&1 || true
 		fi
         ;;

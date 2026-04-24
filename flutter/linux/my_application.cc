@@ -38,13 +38,21 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
   gtk_window_set_decorated(window, FALSE);
-  // try setting icon for rustdesk, which uses the system cache
   GtkIconTheme* theme = gtk_icon_theme_get_default();
+  const gchar* icon_names[] = {"hdesk", "rustdesk"};
   gint icons[4] = {256, 128, 64, 32};
-  for (int i = 0; i < 4; i++) {
-    GdkPixbuf* icon = gtk_icon_theme_load_icon(theme, "rustdesk", icons[i], GTK_ICON_LOOKUP_NO_SVG, NULL);
-    if (icon != nullptr) {
-      gtk_window_set_icon(window, icon);
+  for (int icon_name_index = 0; icon_name_index < 2; icon_name_index++) {
+    for (int i = 0; i < 4; i++) {
+      GdkPixbuf* icon = gtk_icon_theme_load_icon(
+          theme, icon_names[icon_name_index], icons[i], GTK_ICON_LOOKUP_NO_SVG,
+          NULL);
+      if (icon != nullptr) {
+        gtk_window_set_icon(window, icon);
+        break;
+      }
+    }
+    if (gtk_window_get_icon(window) != nullptr) {
+      break;
     }
   }
   // Use a header bar when running in GNOME as this is the common style used
@@ -68,11 +76,11 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "rustdesk");
+    gtk_header_bar_set_title(header_bar, "HDesk");
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "rustdesk");
+    gtk_window_set_title(window, "HDesk");
   }
 
   // auto bdw = bitsdojo_window_from(window); // <--- add this line
