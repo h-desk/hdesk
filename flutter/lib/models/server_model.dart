@@ -15,6 +15,7 @@ import '../common/formatter/id_formatter.dart';
 import '../desktop/pages/server_page.dart' as desktop;
 import '../desktop/widgets/tabbar_widget.dart';
 import '../mobile/pages/server_page.dart';
+import '../utils/desktop_crash_trace.dart';
 import 'model.dart';
 
 const kLoginDialogTag = "LOGIN";
@@ -160,6 +161,8 @@ class ServerModel with ChangeNotifier {
         final res = await bind.cmCheckClientsLength(length: _clients.length);
         if (res != null) {
           debugPrint("clients not match!");
+          DesktopCrashTrace.log(
+              'ServerModel.timerCallback clients length mismatch current=${_clients.length}');
           updateClientState(res);
         } else {
           if (_clients.isEmpty) {
@@ -511,6 +514,8 @@ class ServerModel with ChangeNotifier {
       clientsJson = jsonDecode(res);
     } catch (e) {
       debugPrint("Failed to decode clientsJson: '$res', error $e");
+      DesktopCrashTrace.log(
+          'ServerModel.updateClientState decode failed error=$e payload=$res');
       return;
     }
 
@@ -525,6 +530,8 @@ class ServerModel with ChangeNotifier {
         _addTab(client);
       } catch (e) {
         debugPrint("Failed to decode clientJson '$clientJson', error $e");
+        DesktopCrashTrace.log(
+            'ServerModel.updateClientState client decode failed error=$e payload=$clientJson');
       }
     }
     if (desktopType == DesktopType.cm) {
@@ -535,6 +542,12 @@ class ServerModel with ChangeNotifier {
       }
     }
     if (_clients.length != oldClientLenght) {
+      final sample = _clients
+          .take(5)
+          .map((c) => '${c.id}/${c.peerId}/auth=${c.authorized}/disc=${c.disconnected}')
+          .join(',');
+      DesktopCrashTrace.log(
+          'ServerModel.updateClientState clients $oldClientLenght -> ${_clients.length} sample=[$sample]');
       notifyListeners();
       if (isAndroid) androidUpdatekeepScreenOn();
     }
@@ -543,6 +556,8 @@ class ServerModel with ChangeNotifier {
   void addConnection(Map<String, dynamic> evt) {
     try {
       final client = Client.fromJson(jsonDecode(evt["client"]));
+      DesktopCrashTrace.log(
+          'ServerModel.addConnection id=${client.id} peer=${client.peerId} authorized=${client.authorized} disconnected=${client.disconnected}');
       if (client.authorized) {
         parent.target?.dialogManager.dismissByTag(getLoginDialogTag(client.id));
         final index = _clients.indexWhere((c) => c.id == client.id);
@@ -574,6 +589,7 @@ class ServerModel with ChangeNotifier {
       if (isAndroid) androidUpdatekeepScreenOn();
     } catch (e) {
       debugPrint("Failed to call loginRequest,error:$e");
+      DesktopCrashTrace.log('ServerModel.addConnection failed error=$e event=$evt');
     }
   }
 

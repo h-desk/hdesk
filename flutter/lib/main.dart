@@ -28,6 +28,7 @@ import 'consts.dart';
 import 'mobile/pages/home_page.dart';
 import 'mobile/pages/server_page.dart';
 import 'models/platform_model.dart';
+import 'utils/desktop_crash_trace.dart';
 
 import 'package:flutter_hbb/plugin/handlers.dart'
     if (dart.library.html) 'package:flutter_hbb/web/plugin/handlers.dart';
@@ -215,6 +216,7 @@ Future<void> initEnv(String appType) async {
 
 void runMainApp(bool startService) async {
   // register uni links
+  DesktopCrashTrace.log('runMainApp start startService=$startService');
   await initEnv(kAppTypeMain);
   checkUpdate();
   // trigger connection status updater
@@ -223,10 +225,12 @@ void runMainApp(bool startService) async {
     gFFI.serverModel.startService();
     bind.pluginSyncUi(syncTo: kAppTypeMain);
     bind.pluginListReload();
+    DesktopCrashTrace.log('runMainApp startService dispatched');
   }
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
   runApp(App());
+  DesktopCrashTrace.log('runMainApp app mounted');
 
   bool? alwaysOnTop;
   if (isDesktop) {
@@ -238,6 +242,7 @@ void runMainApp(bool startService) async {
   WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
       isMainWindow: true, alwaysOnTop: alwaysOnTop);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    DesktopCrashTrace.log('runMainApp waitUntilReadyToShow enter');
     // Restore the location of the main window before window hide or show.
     await restoreWindowPosition(WindowType.Main);
     // Check the startup argument, if we successfully handle the argument, we keep the main window hidden.
@@ -245,11 +250,13 @@ void runMainApp(bool startService) async {
     debugPrint("handled by uni links: $handledByUniLinks");
     if (handledByUniLinks || handleUriLink(cmdArgs: kBootArgs)) {
       windowManager.hide();
+      DesktopCrashTrace.log('runMainApp main window hidden by link handling');
     } else {
       windowManager.show();
       windowManager.focus();
       // Move registration of active main window here to prevent from async visible check.
       rustDeskWinManager.registerActiveWindow(kWindowMainId);
+      DesktopCrashTrace.log('runMainApp main window shown and focused');
     }
     windowManager.setOpacity(1);
     windowManager.setTitle(getWindowName());
@@ -274,6 +281,8 @@ void runMultiWindow(
   Map<String, dynamic> argument,
   String appType,
 ) async {
+  DesktopCrashTrace.log(
+      'runMultiWindow start appType=$appType windowId=$kWindowId args=$argument');
   await initEnv(appType);
   final title = getWindowName();
   // set prevent close to true, we handle close event manually
@@ -319,6 +328,8 @@ void runMultiWindow(
     widget,
     MyTheme.currentThemeMode(),
   );
+  DesktopCrashTrace.log(
+      'runMultiWindow app mounted appType=$appType windowId=$kWindowId title=$title');
   // we do not hide titlebar on win7 because of the frame overflow.
   if (kUseCompatibleUiMode) {
     WindowController.fromWindowId(kWindowId!).showTitleBar(true);
@@ -365,25 +376,34 @@ void runMultiWindow(
   }
   // show window from hidden status
   WindowController.fromWindowId(kWindowId!).show();
+  DesktopCrashTrace.log(
+      'runMultiWindow show complete appType=$appType windowId=$kWindowId');
 }
 
 void runConnectionManagerScreen() async {
+  DesktopCrashTrace.log('runConnectionManagerScreen start windowId=$kWindowId');
   await initEnv(kAppTypeConnectionManager);
+  DesktopCrashTrace.log('runConnectionManagerScreen initEnv done');
   _runApp(
     '',
     const DesktopServerPage(),
     MyTheme.currentThemeMode(),
   );
+  DesktopCrashTrace.log('runConnectionManagerScreen app mounted');
   final hide = await bind.cmGetConfig(name: "hide_cm") == 'true';
   gFFI.serverModel.hideCm = hide;
+  DesktopCrashTrace.log('runConnectionManagerScreen hide_cm=$hide');
   if (hide) {
     await hideCmWindow(isStartup: true);
+    DesktopCrashTrace.log('runConnectionManagerScreen hideCmWindow complete');
   } else {
     await showCmWindow(isStartup: true);
+    DesktopCrashTrace.log('runConnectionManagerScreen showCmWindow complete');
   }
   setResizable(false);
   // Start the uni links handler and redirect links to Native, not for Flutter.
   listenUniLinks(handleByFlutter: false);
+  DesktopCrashTrace.log('runConnectionManagerScreen ready');
 }
 
 bool _isCmReadyToShow = false;

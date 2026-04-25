@@ -21,6 +21,7 @@ import '../../common/widgets/chat_page.dart';
 import '../../models/file_model.dart';
 import '../../models/platform_model.dart';
 import '../../models/server_model.dart';
+import '../../utils/desktop_crash_trace.dart';
 
 class DesktopServerPage extends StatefulWidget {
   const DesktopServerPage({Key? key}) : super(key: key);
@@ -44,17 +45,20 @@ class _DesktopServerPageState extends State<DesktopServerPage>
   @override
   void initState() {
     windowManager.addListener(this);
+    DesktopCrashTrace.log('DesktopServerPage.initState');
     super.initState();
   }
 
   @override
   void dispose() {
     windowManager.removeListener(this);
+    DesktopCrashTrace.log('DesktopServerPage.dispose');
     super.dispose();
   }
 
   @override
   void onWindowClose() {
+    DesktopCrashTrace.log('DesktopServerPage.onWindowClose clients=${gFFI.serverModel.clients.length}');
     Future.wait([gFFI.serverModel.closeAll(), gFFI.close()]).then((_) {
       if (isMacOS) {
         RdPlatformChannel.instance.terminate();
@@ -114,9 +118,11 @@ class ConnectionManagerState extends State<ConnectionManager>
     with WidgetsBindingObserver {
   final RxBool _controlPageBlock = false.obs;
   final RxBool _sidePageBlock = false.obs;
+  int? _lastLoggedClientCount;
 
   ConnectionManagerState() {
     gFFI.serverModel.tabController.onSelected = (client_id_str) {
+      DesktopCrashTrace.log('ConnectionManager.onSelected clientId=$client_id_str');
       final client_id = int.tryParse(client_id_str);
       if (client_id != null) {
         final client =
@@ -152,18 +158,26 @@ class ConnectionManagerState extends State<ConnectionManager>
   void initState() {
     gFFI.serverModel.updateClientState();
     WidgetsBinding.instance.addObserver(this);
+    DesktopCrashTrace.log('ConnectionManagerState.initState');
     super.initState();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    DesktopCrashTrace.log('ConnectionManagerState.dispose');
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final serverModel = Provider.of<ServerModel>(context);
+    final clientCount = serverModel.clients.length;
+    if (_lastLoggedClientCount != clientCount) {
+      _lastLoggedClientCount = clientCount;
+      DesktopCrashTrace.log(
+          'ConnectionManager.build clients=$clientCount selected=${serverModel.tabController.state.value.selected} hideCm=${serverModel.hideCm}');
+    }
     pointerHandler(PointerEvent e) {
       if (serverModel.cmHiddenTimer != null) {
         serverModel.cmHiddenTimer!.cancel();
