@@ -33,6 +33,7 @@ PACKAGE_SHARE_DIR = f'usr/share/{PACKAGE_NAME}'
 PACKAGE_SERVICE_NAME = f'{PACKAGE_NAME}.service'
 PACKAGE_DESKTOP_ENTRY = f'{LEGACY_PACKAGE_NAME}.desktop'
 PACKAGE_LINK_DESKTOP_ENTRY = f'{LEGACY_PACKAGE_NAME}-link.desktop'
+MIN_HWCODEC_DLL_SIZE = 29 * 1024 * 1024
 
 
 def get_deb_arch() -> str:
@@ -297,6 +298,30 @@ def get_features(args):
     return features
 
 
+def ensure_windows_flutter_features(args, features):
+    if windows and args.flutter and 'hwcodec' not in features:
+        print('Windows Flutter build auto-enabling hwcodec to avoid Harmony black screens.')
+        features.append('hwcodec')
+    return features
+
+
+def assert_windows_hwcodec_dll(dll_path):
+    if not windows:
+        return
+    if not os.path.exists(dll_path):
+        sys.stderr.write(f'Error: missing `{dll_path}`.\n')
+        sys.exit(-1)
+    dll_size = os.path.getsize(dll_path)
+    if dll_size < MIN_HWCODEC_DLL_SIZE:
+        sys.stderr.write(
+            f'Error: `{dll_path}` is only {dll_size} bytes and likely missing hwcodec support. '
+            'This commonly causes a black screen with Harmony clients. '
+            'Rebuild with `python build.py --flutter --skip-portable-pack --hwcodec` '
+            'or `cargo build --features flutter,hwcodec --lib --release`.\n'
+        )
+        sys.exit(-1)
+
+
 def generate_control_file(version):
     control_file_path = Path(__file__).resolve().parent / 'res' / 'DEBIAN' / 'control'
 
@@ -452,14 +477,17 @@ def build_flutter_arch_manjaro(version, features):
 
 
 def build_flutter_windows(version, features, skip_portable_pack):
+    rust_dll_path = os.path.abspath('target/release/librustdesk.dll')
     if not skip_cargo:
         system2(f'cargo build --features {features} --lib --release')
-        if not os.path.exists("target/release/librustdesk.dll"):
+        if not os.path.exists(rust_dll_path):
             print("cargo build failed, please check rust source code.")
             exit(-1)
+    assert_windows_hwcodec_dll(rust_dll_path)
     os.chdir('flutter')
     system2('flutter build windows --release')
     os.chdir('..')
+    assert_windows_hwcodec_dll(os.path.abspath(os.path.join(flutter_build_dir_2, 'librustdesk.dll')))
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
     if skip_portable_pack:
@@ -467,19 +495,29 @@ def build_flutter_windows(version, features, skip_portable_pack):
     os.chdir('libs/portable')
     system2('pip3 install -r requirements.txt')
     system2(
-        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/rustdesk.exe')
+        f'python3 ./generate.py -f ../../{flutter_build_dir_2} -o . -e ../../{flutter_build_dir_2}/{PACKAGE_NAME}.exe')
     os.chdir('../..')
-    if os.path.exists('./rustdesk_portable.exe'):
+    portable_output = f'./{PACKAGE_NAME}_portable.exe'
+    install_output = f'./{PACKAGE_NAME}-{version}-install.exe'
+    release_output = f'./{PACKAGE_NAME}-{version}-x86_64.exe'
+    if os.path.exists(portable_output):
         os.replace('./target/release/rustdesk-portable-packer.exe',
-                   './rustdesk_portable.exe')
+                   portable_output)
     else:
         os.rename('./target/release/rustdesk-portable-packer.exe',
-                  './rustdesk_portable.exe')
+                  portable_output)
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk_portable.exe')
-    os.rename('./rustdesk_portable.exe', f'./rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/{PACKAGE_NAME}_portable.exe')
+    if os.path.exists(release_output):
+        os.remove(release_output)
+    shutil.copy2(portable_output, release_output)
+    if os.path.exists(install_output):
+        os.remove(install_output)
+    os.rename(portable_output, install_output)
     print(
-        f'output location: {os.path.abspath(os.curdir)}/rustdesk-{version}-install.exe')
+        f'output location: {os.path.abspath(os.curdir)}/{PACKAGE_NAME}-{version}-x86_64.exe')
+    print(
+        f'output location: {os.path.abspath(os.curdir)}/{PACKAGE_NAME}-{version}-install.exe')
 
 
 def main():
@@ -492,7 +530,7 @@ def main():
     if os.path.isfile('/usr/bin/pacman'):
         system2('git checkout src/ui/common.tis')
     version = get_version()
-    features = ','.join(get_features(args))
+    features = ','.join(ensure_windows_flutter_features(args, get_features(args)))
     flutter = args.flutter
     if not flutter:
         system2('python3 res/inline-sciter.py')

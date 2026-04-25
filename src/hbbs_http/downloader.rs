@@ -46,6 +46,61 @@ struct Downloader {
     tx_cancel: UnboundedSender<()>,
 }
 
+fn parse_total_size_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|content_range| content_range.to_str().ok())
+        .and_then(|content_range| content_range.rsplit('/').next())
+        .and_then(|total_size| total_size.trim().parse::<u64>().ok())
+        .or_else(|| {
+            headers
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|content_length| content_length.to_str().ok())
+                .and_then(|content_length| content_length.parse::<u64>().ok())
+        })
+}
+
+async fn probe_total_size(client: &reqwest::Client, url: &str) -> ResultType<u64> {
+    match client.head(url).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            if let Some(total_size) = parse_total_size_from_headers(resp.headers()) {
+                return Ok(total_size);
+            }
+            log::warn!(
+                "HEAD {} succeeded but did not expose a usable file size, falling back to ranged GET",
+                url
+            );
+        }
+        Ok(resp) => {
+            log::warn!(
+                "HEAD {} returned {}, falling back to ranged GET for file size",
+                url,
+                resp.status()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "HEAD {} failed while probing file size: {}, falling back to ranged GET",
+                url,
+                err
+            );
+        }
+    }
+
+    let resp = client
+        .get(url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        bail!("Failed to get content length: {}", resp.status());
+    }
+    let Some(total_size) = parse_total_size_from_headers(resp.headers()) else {
+        bail!("Failed to get content length");
+    };
+    Ok(total_size)
+}
+
 // The caller should check if the file is downloaded successfully and remove the job from the map.
 pub fn download_file(
     url: String,
@@ -174,29 +229,11 @@ async fn do_download(
         _ = rx_cancel.recv() => {
             return Ok(is_all_downloaded);
         }
-        head_resp = client.head(&url).send() => {
-            match head_resp {
-                Ok(resp) => {
-                    if resp.status().is_success() {
-                        let total_size = resp
-                            .headers()
-                            .get(reqwest::header::CONTENT_LENGTH)
-                            .and_then(|ct_len| ct_len.to_str().ok())
-                            .and_then(|ct_len| ct_len.parse::<u64>().ok());
-                        let Some(total_size) = total_size else {
-                            bail!("Failed to get content length");
-                        };
-                        DOWNLOADERS.lock().unwrap().get_mut(id).map(|downloader| {
-                            downloader.total_size = Some(total_size);
-                        });
-                    } else {
-                        bail!("Failed to get content length: {}", resp.status());
-                    }
-                }
-                Err(e) => {
-                    return Err(e.into());
-                }
-            }
+        total_size = probe_total_size(&client, &url) => {
+            let total_size = total_size?;
+            DOWNLOADERS.lock().unwrap().get_mut(id).map(|downloader| {
+                downloader.total_size = Some(total_size);
+            });
         }
     }
 

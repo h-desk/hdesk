@@ -108,13 +108,30 @@ class PeerTabModel with ChangeNotifier {
     } catch (e) {
       debugPrint("failed to get peer tab order list: $e");
     }
-    // init currentTab
+    _ensureAtLeastOneVisibleTab(saveOption: false);
+    final savedTab =
+        int.tryParse(bind.getLocalFlutterOption(k: kOptionPeerTabIndex));
     _currentTab =
-        int.tryParse(bind.getLocalFlutterOption(k: kOptionPeerTabIndex)) ?? 0;
-    if (_currentTab < 0 || _currentTab >= maxTabCount) {
-      _currentTab = 0;
+        savedTab != null && visibleEnabledOrderedIndexs.contains(savedTab)
+            ? savedTab
+            : visibleEnabledOrderedIndexs.first;
+  }
+
+  void _ensureAtLeastOneVisibleTab({required bool saveOption}) {
+    if (visibleEnabledOrderedIndexs.isNotEmpty) {
+      return;
     }
-    _trySetCurrentTabToFirstVisibleEnabled();
+    for (final tabIndex in orders) {
+      if (!isEnabled[tabIndex]) continue;
+      _isVisible[tabIndex] = true;
+      if (saveOption) {
+        try {
+          bind.setLocalFlutterOption(
+              k: kOptionPeerTabVisible, v: jsonEncode(_isVisible));
+        } catch (_) {}
+      }
+      return;
+    }
   }
 
   setCurrentTab(int index) {
@@ -220,6 +237,7 @@ class PeerTabModel with ChangeNotifier {
     if (index >= 0 && index < maxTabCount) {
       if (_isVisible[index] != visible) {
         _isVisible[index] = visible;
+        _ensureAtLeastOneVisibleTab(saveOption: false);
         if (index == _currentTab && !visible) {
           _trySetCurrentTabToFirstVisibleEnabled();
         } else if (visible && visibleEnabledOrderedIndexs.length == 1) {

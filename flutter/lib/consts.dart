@@ -40,6 +40,15 @@ const double kScrollbarThickness = 12.0;
 /// [kAppTypeMain] used by 'Desktop Main Page' , 'Mobile (Client and Server)', "Install Page"
 const String kAppTypeMain = "main";
 const String kHdeskPortalUrl = "https://apps.yunjichuangzhi.cn/hdesk/index.html";
+const String kHdeskLatestJsonUrl =
+    "https://apps.yunjichuangzhi.cn/hdesk/latest.json";
+const String kHdeskPrivacyUrl =
+    "https://apps.yunjichuangzhi.cn/hdesk/privacy.html";
+const String kHdeskUserAgreementUrl =
+    "https://apps.yunjichuangzhi.cn/hdesk/user-agreement.html";
+const String kHdeskGithubRepoUrl = "https://github.com/h-desk/hdesk";
+const String kHdeskGithubReleasesUrl =
+    "https://github.com/h-desk/hdesk/releases";
 
 /// [kAppTypeConnectionManager] only for 'Desktop CM Page'
 const String kAppTypeConnectionManager = "cm";

@@ -115,6 +115,7 @@ class _PeersViewState extends State<_PeersView>
   void initState() {
     windowManager.addListener(this);
     WidgetsBinding.instance.addObserver(this);
+    _reloadRecentPeersIfNeeded();
     super.initState();
   }
 
@@ -123,6 +124,7 @@ class _PeersViewState extends State<_PeersView>
     windowManager.removeListener(this);
     WidgetsBinding.instance.removeObserver(this);
     _exit = true;
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -130,6 +132,7 @@ class _PeersViewState extends State<_PeersView>
   void onWindowFocus() {
     _queryCount = 0;
     _isActive = true;
+    _reloadRecentPeersIfNeeded();
   }
 
   @override
@@ -156,6 +159,7 @@ class _PeersViewState extends State<_PeersView>
     _queryCount = 0;
     _isActive = true;
     _lastWindowRestoreTime = DateTime.now();
+    _reloadRecentPeersIfNeeded();
   }
 
   @override
@@ -172,8 +176,15 @@ class _PeersViewState extends State<_PeersView>
     if (state == AppLifecycleState.resumed) {
       _isActive = true;
       _queryCount = 0;
+      _reloadRecentPeersIfNeeded();
     } else if (state == AppLifecycleState.inactive) {
       _isActive = false;
+    }
+  }
+
+  void _reloadRecentPeersIfNeeded() {
+    if (widget.peers.loadEvent == LoadEvent.recent) {
+      bind.mainLoadRecentPeers();
     }
   }
 
@@ -265,6 +276,8 @@ class _PeersViewState extends State<_PeersView>
             // Simple demo can reproduce this issue.
             final Widget child = Obx(() => stateGlobal.isPortrait.isTrue
                 ? ListView.builder(
+                    controller: _scrollController,
+                    padding: EdgeInsets.only(right: space / 2, bottom: space),
                     itemCount: peers.length,
                     itemBuilder: (BuildContext context, int index) {
                       return buildOnePeer(peers[index], true).marginOnly(
@@ -274,6 +287,8 @@ class _PeersViewState extends State<_PeersView>
                 : peerCardUiType.value == PeerUiType.list
                     ? ListView.builder(
                         controller: _scrollController,
+                        padding:
+                            EdgeInsets.only(right: space / 2, bottom: space),
                         itemCount: peers.length,
                         itemBuilder: (BuildContext context, int index) {
                           return buildOnePeer(peers[index], false).marginOnly(
@@ -283,6 +298,9 @@ class _PeersViewState extends State<_PeersView>
                         },
                       )
                     : DynamicGridView.builder(
+                        controller: _scrollController,
+                        padding:
+                            EdgeInsets.only(right: space / 2, bottom: space),
                         gridDelegate: SliverGridDelegateWithWrapping(
                             mainAxisSpacing: space / 2,
                             crossAxisSpacing: space),
@@ -296,7 +314,7 @@ class _PeersViewState extends State<_PeersView>
               _curPeers.addAll(peers.map((e) => e.id));
               _queryOnlines(true);
             }
-            return child;
+            return _wrapScrollable(child);
           } else {
             return const Center(
               child: CircularProgressIndicator(),
@@ -308,6 +326,21 @@ class _PeersViewState extends State<_PeersView>
     }, obslist);
 
     return body;
+  }
+
+  Widget _wrapScrollable(Widget child) {
+    if (!(isDesktop || isWebDesktop)) {
+      return child;
+    }
+    return Scrollbar(
+      controller: _scrollController,
+      thumbVisibility: true,
+      trackVisibility: true,
+      interactive: true,
+      thickness: kScrollbarThickness,
+      radius: const Radius.circular(999),
+      child: child,
+    );
   }
 
   var _queryInterval = const Duration(seconds: 20);

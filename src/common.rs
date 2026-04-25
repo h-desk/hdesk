@@ -948,47 +948,178 @@ pub fn is_modifier(evt: &KeyEvent) -> bool {
 }
 
 pub fn check_software_update() {
-    if is_custom_client() {
+    if !use_official_update_channel() {
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
         return;
     }
     let opt = LocalConfig::get_option(keys::OPTION_ENABLE_CHECK_UPDATE);
     if config::option2bool(keys::OPTION_ENABLE_CHECK_UPDATE, &opt) {
-        std::thread::spawn(move || allow_err!(do_check_software_update()));
+        std::thread::spawn(move || allow_err!(do_check_software_update(false)));
     }
 }
 
-// hdesk: update check uses GitHub releases API
-#[tokio::main(flavor = "current_thread")]
-pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    const GITHUB_API_URL: &str =
-        "https://api.github.com/repos/wangqiukeke/hdesk/releases/latest";
+pub fn manually_check_software_update() {
+    std::thread::spawn(move || {
+        if let Err(err) = do_check_software_update(true) {
+            let error = err.to_string();
+            log::error!("Error checking for updates: {}", error);
+            push_software_update_event("", "error", &error);
+        }
+    });
+}
+
+pub const OFFICIAL_UPDATE_APP_NAME: &str = "HDesk";
+pub const OFFICIAL_RELEASE_ASSET_PREFIX: &str = "hdesk";
+pub const OFFICIAL_UPDATE_SERVER_HOST: &str = "releases.hdesk.yunjichuangzhi.cn";
+pub const OFFICIAL_PORTAL_URL: &str = "https://apps.yunjichuangzhi.cn/hdesk/index.html";
+pub const OFFICIAL_UPDATE_SERVER_LATEST_JSON_URL: &str =
+    "https://releases.hdesk.yunjichuangzhi.cn/latest.json";
+pub const OFFICIAL_GITHUB_REPO_URL: &str = "https://github.com/h-desk/hdesk";
+pub const OFFICIAL_GITHUB_RELEASES_URL: &str = "https://github.com/h-desk/hdesk/releases";
+#[cfg(target_os = "windows")]
+pub const OFFICIAL_WINDOWS_UPDATE_VERSION: &str = "1.4.6";
+#[cfg(target_os = "windows")]
+pub const OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL: &str = "https://agc-storage-drcn.platform.dbankcloud.cn/v0/hdesk-erv9s/releases%2Fhdesk-1.4.6-x86_64.exe?token=7a3620e9-9dce-4b5c-8db3-6a0ecd94685f";
+
+#[inline]
+pub fn use_official_update_channel() -> bool {
+    !is_custom_client() || get_app_name().eq_ignore_ascii_case(OFFICIAL_UPDATE_APP_NAME)
+}
+
+#[cfg(feature = "flutter")]
+fn push_software_update_event(url: &str, status: &str, error: &str) {
+    let mut m = HashMap::new();
+    m.insert("name", "check_software_update_finish");
+    m.insert("url", url);
+    m.insert("status", status);
+    m.insert("error", error);
+    if let Ok(data) = serde_json::to_string(&m) {
+        let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);
+    }
+}
+
+#[cfg(not(feature = "flutter"))]
+fn push_software_update_event(_url: &str, _status: &str, _error: &str) {}
+
+async fn fetch_json_from_official_url(url: &str) -> hbb_common::ResultType<serde_json::Value> {
     let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(GITHUB_API_URL, &proxy_conf);
+    let tls_url = get_url_for_tls(url, &proxy_conf);
     let tls_type = get_cached_tls_type(tls_url).unwrap_or(TlsType::Rustls);
     let client = create_http_client_async(tls_type, false);
     let response = client
-        .get(GITHUB_API_URL)
+        .get(url)
         .header("User-Agent", "hdesk-updater")
         .send()
         .await?;
     let bytes = response.bytes().await?;
-    let json: serde_json::Value = serde_json::from_slice(&bytes)?;
-    let response_url = json["html_url"].as_str().unwrap_or_default().to_string();
-    let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
+    Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[cfg(target_os = "windows")]
+fn builtin_update_release() -> Option<(String, String)> {
+    Some((
+        OFFICIAL_WINDOWS_UPDATE_VERSION.to_owned(),
+        OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL.to_owned(),
+    ))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn builtin_update_release() -> Option<(String, String)> {
+    None
+}
+
+async fn fetch_latest_release_from_update_server() -> Option<(String, String)> {
+    let json = match fetch_json_from_official_url(OFFICIAL_UPDATE_SERVER_LATEST_JSON_URL).await {
+        Ok(json) => json,
+        Err(err) => {
+            log::warn!(
+                "Failed to fetch latest release metadata from update server {}: {}",
+                OFFICIAL_UPDATE_SERVER_HOST,
+                err
+            );
+            return builtin_update_release();
+        }
+    };
+
+    let version = json["version"].as_str().unwrap_or_default().trim().to_string();
+    let release_page_url = json["downloads"]["windows"]["x86_64"]["exe"]
+        .as_str()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            [
+                "downloadUrl",
+                "downloadURL",
+                "windowsDownloadUrl",
+                "releasePageUrl",
+                "releaseUrl",
+                "githubReleaseUrl",
+                "url",
+            ]
+            .iter()
+            .find_map(|key| {
+                json[*key]
+                    .as_str()
+                    .map(|value| value.trim())
+                    .filter(|value| !value.is_empty())
+                    .map(ToOwned::to_owned)
+            })
+        })
+        .unwrap_or_default();
+
+    if version.is_empty() || release_page_url.is_empty() {
+        log::warn!(
+            "Update server metadata is missing required fields: version='{}', release='{}'",
+            version,
+            release_page_url
+        );
+        builtin_update_release()
+    } else {
+        Some((version, release_page_url))
+    }
+}
+
+// hdesk: update check uses the custom update server first and falls back to the configured Windows AGC direct download metadata.
+#[tokio::main(flavor = "current_thread")]
+pub async fn do_check_software_update(manual: bool) -> hbb_common::ResultType<()> {
+    if !use_official_update_channel() {
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+        if manual {
+            push_software_update_event(
+                "",
+                "error",
+                "Software update is not available for this client.",
+            );
+        }
+        return Ok(());
+    }
+
+    let Some((latest_release_version, response_url)) =
+        fetch_latest_release_from_update_server().await
+    else {
+        *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+        if manual {
+            push_software_update_event(
+                "",
+                "error",
+                &format!(
+                    "Failed to fetch update metadata from {}.",
+                    OFFICIAL_UPDATE_SERVER_HOST
+                ),
+            );
+        }
+        return Ok(());
+    };
 
     if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
-        #[cfg(feature = "flutter")]
-        {
-            let mut m = HashMap::new();
-            m.insert("name", "check_software_update_finish");
-            m.insert("url", &response_url);
-            if let Ok(data) = serde_json::to_string(&m) {
-                let _ = crate::flutter::push_global_event(crate::flutter::APP_TYPE_MAIN, data);
-            }
-        }
+        push_software_update_event(&response_url, "available", "");
         *SOFTWARE_UPDATE_URL.lock().unwrap() = response_url;
     } else {
         *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
+        if manual {
+            push_software_update_event("", "up-to-date", "");
+        }
     }
     Ok(())
 }

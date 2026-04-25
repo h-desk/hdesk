@@ -968,7 +968,6 @@ class RecentPeerCard extends BasePeerCard {
       BuildContext context) async {
     final List<MenuEntryBase<String>> menuItems = [
       _connectAction(context),
-      _transferFileAction(context),
       // hdesk: camera, terminal, tcp tunneling removed
     ];
 
@@ -976,13 +975,6 @@ class RecentPeerCard extends BasePeerCard {
       // hdesk: terminalRunAsAdmin removed
     }
 
-    final List favs = (await bind.mainGetFav()).toList();
-
-    // hdesk: tcpTunneling removed
-    // menuItems.add(await _openNewConnInOptAction(peer.id));
-    if (!isWeb) {
-      menuItems.add(await _forceAlwaysRelayAction(peer.id));
-    }
     // hdesk: rdp removed
     if (isWindows) {
       menuItems.add(_createShortCutAction(peer.id));
@@ -993,12 +985,6 @@ class RecentPeerCard extends BasePeerCard {
     }
     if (await bind.mainPeerHasPassword(id: peer.id)) {
       menuItems.add(_unrememberPasswordAction(peer.id));
-    }
-
-    if (!favs.contains(peer.id)) {
-      menuItems.add(_addFavAction(peer.id));
-    } else {
-      menuItems.add(_rmFavAction(peer.id, () async {}));
     }
 
     if (gFFI.userModel.userName.isNotEmpty) {

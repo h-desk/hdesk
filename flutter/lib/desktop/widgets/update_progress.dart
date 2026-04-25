@@ -3,25 +3,35 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common.dart';
+import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:get/get.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 final _isExtracting = false.obs;
 
+bool _isReleasePageUrl(String url) => url.contains('/releases/tag/');
+
 void handleUpdate(String releasePageUrl) {
   _isExtracting.value = false;
-  String downloadUrl = releasePageUrl.replaceAll('tag', 'download');
-  String version = downloadUrl.substring(downloadUrl.lastIndexOf('/') + 1);
-  final String downloadFile =
-      bind.mainGetCommonSync(key: 'download-file-$version');
-  if (downloadFile.startsWith('error:')) {
-    final error = downloadFile.replaceFirst('error:', '');
-    msgBox(gFFI.sessionId, 'custom-nocancel-nook-hasclose', 'Error', error,
-        releasePageUrl, gFFI.dialogManager);
+  String downloadUrl = releasePageUrl;
+  if (_isReleasePageUrl(releasePageUrl)) {
+    final downloadRoot = releasePageUrl.replaceFirst('/tag/', '/download/');
+    final version = downloadRoot.substring(downloadRoot.lastIndexOf('/') + 1);
+    final String downloadFile =
+        bind.mainGetCommonSync(key: 'download-file-$version');
+    if (downloadFile.startsWith('error:')) {
+      final error = downloadFile.replaceFirst('error:', '');
+      msgBox(gFFI.sessionId, 'custom-nocancel-nook-hasclose', 'Error', error,
+          kHdeskPortalUrl, gFFI.dialogManager);
+      return;
+    }
+    downloadUrl = '$downloadRoot/$downloadFile';
+  } else if (!releasePageUrl.startsWith('http://') &&
+      !releasePageUrl.startsWith('https://')) {
+    launchUrlString(kHdeskPortalUrl);
     return;
   }
-  downloadUrl = '$downloadUrl/$downloadFile';
 
   SimpleWrapper downloadId = SimpleWrapper('');
   SimpleWrapper<VoidCallback> onCanceled = SimpleWrapper(() {});
@@ -145,7 +155,9 @@ class UpdateProgressState extends State<UpdateProgress> {
     }
 
     jumplink() {
-      launchUrl(Uri.parse(widget.releasePageUrl));
+      launchUrlString(widget.releasePageUrl.startsWith('http')
+          ? widget.releasePageUrl
+          : kHdeskPortalUrl);
       dialogManager.dismissAll();
     }
 

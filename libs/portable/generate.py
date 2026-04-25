@@ -3,7 +3,10 @@
 import os
 import optparse
 from hashlib import md5
-import brotli
+try:
+    import brotli
+except ImportError:
+    import brotlicffi as brotli
 import datetime
 
 # 4GB maximum

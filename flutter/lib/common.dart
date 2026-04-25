@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math';
 
 import 'package:back_button_interceptor/back_button_interceptor.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -251,23 +250,24 @@ class MyTheme {
   MyTheme._();
 
   static const Color grayBg = Color(0xFFEFEFF2);
-  static const Color accent = Color(0xFF0071FF);
-  static const Color accent50 = Color(0x770071FF);
-  static const Color accent80 = Color(0xAA0071FF);
+  // 更现代的蓝色主色调 (#3B82F6)
+  static const Color accent = Color(0xFF3B82F6);
+  static const Color accent50 = Color(0x773B82F6);
+  static const Color accent80 = Color(0xAA3B82F6);
   static const Color canvasColor = Color(0xFF212121);
   static const Color border = Color(0xFFCCCCCC);
   static const Color idColor = Color(0xFF00B6F0);
   static const Color darkGray = Color.fromARGB(255, 148, 148, 148);
   static const Color cmIdColor = Color(0xFF21790B);
   static const Color dark = Colors.black87;
-  static const Color button = Color(0xFF2C8CFF);
+  static const Color button = Color(0xFF3B82F6);  // 按钮颜色也更新
   static const Color hoverBorder = Color(0xFF999999);
 
-  // ListTile
+  // ListTile - 统一圆角为 8px
   static const ListTileThemeData listTileTheme = ListTileThemeData(
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.all(
-        Radius.circular(5),
+        Radius.circular(8),
       ),
     ),
   );
@@ -626,8 +626,12 @@ class MyTheme {
         return ThemeMode.light;
       case "dark":
         return ThemeMode.dark;
-      default:
+      case "system":
         return ThemeMode.system;
+      case "":
+        return isCustomClient ? ThemeMode.dark : ThemeMode.system;
+      default:
+        return isCustomClient ? ThemeMode.dark : ThemeMode.system;
     }
   }
 }
@@ -1058,6 +1062,7 @@ class CustomAlertDialog extends StatelessWidget {
       this.actions,
       this.contentPadding,
       this.contentBoxConstraints = const BoxConstraints(maxWidth: 500),
+  this.scrollable = true,
       this.onSubmit,
       this.onCancel})
       : super(key: key);
@@ -1068,6 +1073,7 @@ class CustomAlertDialog extends StatelessWidget {
   final List<Widget>? actions;
   final double? contentPadding;
   final BoxConstraints contentBoxConstraints;
+  final bool scrollable;
   final Function()? onSubmit;
   final Function()? onCancel;
 
@@ -1106,7 +1112,8 @@ class CustomAlertDialog extends StatelessWidget {
         return KeyEventResult.ignored;
       },
       child: AlertDialog(
-          scrollable: true,
+          scrollable: scrollable,
+          clipBehavior: Clip.antiAlias,
           title: title,
           content: ConstrainedBox(
             constraints: contentBoxConstraints,
@@ -1114,8 +1121,9 @@ class CustomAlertDialog extends StatelessWidget {
           ),
           actions: actions,
           titlePadding: titlePadding ?? MyTheme.dialogTitlePadding(),
-          contentPadding:
-              MyTheme.dialogContentPadding(actions: actions is List),
+          contentPadding: contentPadding != null
+              ? EdgeInsets.all(contentPadding!)
+              : MyTheme.dialogContentPadding(actions: actions is List),
           actionsPadding: MyTheme.dialogActionsPadding(),
           buttonPadding: MyTheme.dialogButtonPadding),
     );
@@ -3573,16 +3581,14 @@ ColorFilter? svgColor(Color? color) {
   }
 }
 
-// ignore: must_be_immutable
 class ComboBox extends StatelessWidget {
-  late final List<String> keys;
-  late final List<String> values;
-  late final String initialKey;
-  late final Function(String key) onChanged;
-  late final bool enabled;
-  late String current;
+  final List<String> keys;
+  final List<String> values;
+  final String initialKey;
+  final Function(String key) onChanged;
+  final bool enabled;
 
-  ComboBox({
+  const ComboBox({
     Key? key,
     required this.keys,
     required this.values,
@@ -3597,53 +3603,51 @@ class ComboBox extends StatelessWidget {
     if (index < 0) {
       index = 0;
     }
-    var ref = values[index].obs;
-    current = keys[index];
-    return Container(
-      decoration: BoxDecoration(
-        border: Border.all(
-          color: enabled
-              ? MyTheme.color(context).border2 ?? MyTheme.border
-              : MyTheme.border,
+    final borderColor = enabled
+        ? MyTheme.color(context).border2 ?? MyTheme.border
+        : MyTheme.border;
+    final textColor = enabled
+        ? Theme.of(context).textTheme.titleMedium?.color
+        : disabledTextColor(context, enabled);
+    final border = OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: BorderSide(color: borderColor),
+    );
+    return LayoutBuilder(builder: (context, constraints) {
+      return DropdownMenu<String>(
+        width: constraints.maxWidth.isFinite ? constraints.maxWidth : null,
+        initialSelection: keys[index],
+        enabled: enabled,
+        requestFocusOnTap: enabled,
+        textStyle: TextStyle(color: textColor, fontSize: 15),
+        inputDecorationTheme: InputDecorationTheme(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 15, vertical: 0),
+          border: border,
+          enabledBorder: border,
+          disabledBorder: border,
+          focusedBorder: border,
         ),
-        borderRadius:
-            BorderRadius.circular(8), //border raiuds of dropdown button
-      ),
-      height: 42, // should be the height of a TextField
-      child: Obx(() => DropdownButton<String>(
-            isExpanded: true,
-            value: ref.value,
-            elevation: 16,
-            underline: Container(),
-            style: TextStyle(
-                color: enabled
-                    ? Theme.of(context).textTheme.titleMedium?.color
-                    : disabledTextColor(context, enabled)),
-            icon: const Icon(
-              Icons.expand_more_sharp,
-              size: 20,
-            ).marginOnly(right: 15),
-            onChanged: enabled
-                ? (String? newValue) {
-                    if (newValue != null && newValue != ref.value) {
-                      ref.value = newValue;
-                      current = newValue;
-                      onChanged(keys[values.indexOf(newValue)]);
-                    }
-                  }
-                : null,
-            items: values.map<DropdownMenuItem<String>>((String value) {
-              return DropdownMenuItem<String>(
-                value: value,
-                child: Text(
-                  value,
-                  style: const TextStyle(fontSize: 15),
-                  overflow: TextOverflow.ellipsis,
-                ).marginOnly(left: 15),
-              );
-            }).toList(),
-          )),
-    ).marginOnly(bottom: 5);
+        menuStyle: const MenuStyle(
+          maximumSize: WidgetStatePropertyAll(Size(600, 320)),
+        ),
+        onSelected: enabled
+            ? (String? newKey) {
+                if (newKey != null) {
+                  onChanged(newKey);
+                }
+              }
+            : null,
+        dropdownMenuEntries: List.generate(
+          keys.length,
+          (itemIndex) => DropdownMenuEntry<String>(
+            value: keys[itemIndex],
+            label: values[itemIndex],
+          ),
+        ),
+      );
+    }).marginOnly(bottom: 5);
   }
 }
 

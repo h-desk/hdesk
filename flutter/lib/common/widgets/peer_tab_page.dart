@@ -109,13 +109,19 @@ class _PeerTabPageState extends State<PeerTabPage>
       textBaseline: TextBaseline.ideographic,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Obx(() => SizedBox(
-              height: 32,
-              child: Container(
-                padding: stateGlobal.isPortrait.isTrue
-                    ? EdgeInsets.symmetric(horizontal: 2)
-                    : null,
-                child: selectionWrap(Row(
+        Obx(() => Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: stateGlobal.isPortrait.isTrue ? 6 : 8,
+                vertical: 6,
+              ),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.background,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Theme.of(context).dividerColor.withOpacity(0.7),
+                ),
+              ),
+              child: selectionWrap(Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
                     Expanded(
@@ -127,7 +133,6 @@ class _PeerTabPageState extends State<PeerTabPage>
                       ..._landscapeRightActions(context)
                   ],
                 )),
-              ),
             ).paddingOnly(right: stateGlobal.isPortrait.isTrue ? 0 : 12)),
         _createPeersView(),
       ],
@@ -144,18 +149,24 @@ class _PeerTabPageState extends State<PeerTabPage>
         physics: NeverScrollableScrollPhysics(),
         children: model.visibleEnabledOrderedIndexs.map((t) {
           final selected = model.currentTab == t;
-          final color = selected
-              ? MyTheme.tabbar(context).selectedTextColor
-              : MyTheme.tabbar(context).unSelectedTextColor
-            ?..withOpacity(0.5);
+          final selectedColor =
+              MyTheme.tabbar(context).selectedTextColor ?? MyTheme.accent;
+          final unselectedColor =
+              MyTheme.tabbar(context).unSelectedTextColor?.withOpacity(0.72) ??
+                  Theme.of(context).hintColor;
+          final color = selected ? selectedColor : unselectedColor;
           final hover = false.obs;
           final deco = BoxDecoration(
-              color: Theme.of(context).colorScheme.background,
-              borderRadius: BorderRadius.circular(6));
+            color: hover.value
+                ? selectedColor.withOpacity(0.08)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(10),
+          );
           final decoBorder = BoxDecoration(
-              border: Border(
-            bottom: BorderSide(width: 2, color: color!),
-          ));
+            color: selectedColor.withOpacity(0.14),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: selectedColor.withOpacity(0.35)),
+          );
           counter += 1;
           return ReorderableDragStartListener(
               key: ValueKey(t),
@@ -169,9 +180,9 @@ class _PeerTabPageState extends State<PeerTabPage>
                         decoration: (hover.value
                             ? (selected ? decoBorder : deco)
                             : (selected ? decoBorder : null)),
-                        child: Icon(model.tabIcon(t), color: color)
-                            .paddingSymmetric(horizontal: 4),
-                      ).paddingSymmetric(horizontal: 4),
+                        child: Icon(model.tabIcon(t), color: color, size: 18)
+                            .paddingSymmetric(horizontal: 8, vertical: 6),
+                      ).paddingSymmetric(horizontal: 3),
                       onTap: isOptionFixed(kOptionPeerTabIndex)
                           ? null
                           : () async {
@@ -232,10 +243,6 @@ class _PeerTabPageState extends State<PeerTabPage>
                 ))),
       ),
     );
-  }
-
-  Widget _createPeerViewTypeSwitch(BuildContext context) {
-    return PeerViewDropdown();
   }
 
   Widget _createMultiSelection() {
@@ -564,7 +571,6 @@ class _PeerTabPageState extends State<PeerTabPage>
         offstage: model.currentTabCachedPeers.isEmpty,
         child: _createMultiSelection(),
       ),
-      _createPeerViewTypeSwitch(context),
       Offstage(
         offstage: model.currentTab == PeerTabIndex.recent.index,
         child: PeerSortDropdown(),
@@ -700,8 +706,11 @@ class _PeerSearchBarState extends State<PeerSearchBar> {
     return Obx(() => Container(
           width: stateGlobal.isPortrait.isTrue ? 120 : 140,
           decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.background,
-            borderRadius: BorderRadius.circular(6),
+            color: Theme.of(context).scaffoldBackgroundColor.withOpacity(0.72),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: Theme.of(context).dividerColor.withOpacity(0.7),
+            ),
           ),
           child: Row(
             children: [

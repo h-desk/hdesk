@@ -37,6 +37,79 @@ int? kWindowId;
 WindowType? kWindowType;
 late List<String> kBootArgs;
 
+const String _kHdeskDefaultApproveMode = 'password';
+const String _kHdeskDefaultVerificationMethod = 'use-both-passwords';
+const String _kHdeskDefaultCodecPreference = 'h264';
+
+const Map<String, String> _kHdeskManagedPermissionDefaults = {
+  kOptionEnableKeyboard: 'Y',
+  kOptionEnableClipboard: 'Y',
+  kOptionEnableFileTransfer: 'Y',
+  kOptionEnableAudio: 'Y',
+  kOptionEnableRemotePrinter: 'N',
+  kOptionEnableCamera: 'N',
+  kOptionEnableTerminal: 'N',
+  kOptionEnableTunnel: 'N',
+  kOptionEnableRemoteRestart: 'N',
+  kOptionEnableRecordSession: 'N',
+  kOptionEnableBlockInput: 'N',
+};
+
+bool _showHdeskAdvancedSecuritySettings() {
+  return bind.mainGetBuildinOption(key: 'show-advanced-security-settings') ==
+      'Y';
+}
+
+bool _showHdeskAdvancedDisplaySettings() {
+  return bind.mainGetBuildinOption(key: 'show-advanced-display-settings') ==
+      'Y';
+}
+
+Future<void> _ensureHdeskOptionDefault(String key, String value) async {
+  final current = await bind.mainGetOption(key: key);
+  if (current.isEmpty) {
+    bind.mainSetOption(key: key, value: value);
+  }
+}
+
+Future<void> _applyHdeskManagedSecurityDefaults() async {
+  if (_showHdeskAdvancedSecuritySettings()) {
+    return;
+  }
+
+  bind.mainSetOption(key: kOptionAccessMode, value: 'custom');
+  bind.mainSetOption(key: kOptionAllowRemoteConfigModification, value: 'Y');
+  bind.mainSetOption(key: kOptionDirectServer, value: 'Y');
+  for (final entry in _kHdeskManagedPermissionDefaults.entries) {
+    bind.mainSetOption(key: entry.key, value: entry.value);
+  }
+}
+
+Future<void> _applyHdeskManagedDisplayDefaults() async {
+  if (_showHdeskAdvancedDisplaySettings()) {
+    return;
+  }
+
+  final current = bind.mainGetUserDefaultOption(key: kOptionCodecPreference);
+  if (current.isEmpty || current == 'auto') {
+    await bind.mainSetUserDefaultOption(
+        key: kOptionCodecPreference, value: _kHdeskDefaultCodecPreference);
+  }
+}
+
+Future<void> _applyHdeskManagedDesktopDefaults(String appType) async {
+  if (!isDesktop || appType != kAppTypeMain) {
+    return;
+  }
+
+  // Keep the simplified desktop build predictable for ordinary users.
+  await _applyHdeskManagedSecurityDefaults();
+  await _applyHdeskManagedDisplayDefaults();
+  await _ensureHdeskOptionDefault(kOptionApproveMode, _kHdeskDefaultApproveMode);
+  await _ensureHdeskOptionDefault(
+      kOptionVerificationMethod, _kHdeskDefaultVerificationMethod);
+}
+
 Future<void> main(List<String> args) async {
   earlyAssert();
   WidgetsFlutterBinding.ensureInitialized();
@@ -126,10 +199,14 @@ Future<void> initEnv(String appType) async {
   // for convenience, use global FFI on mobile platform
   // focus on multi-ffi on desktop first
   await initGlobalFFI();
-  // hdesk: lock server config, always use hdesk server
-  bind.mainSetOption(key: 'custom-rendezvous-server', value: 'hdesk.yunjichuangzhi.cn');
-  bind.mainSetOption(key: 'relay-server', value: 'hdesk.yunjichuangzhi.cn');
+    // hdesk: lock session traffic to the production rendezvous/relay host.
+  bind.mainSetOption(
+      key: 'custom-rendezvous-server',
+      value: 'hdesk.yunjichuangzhi.cn');
+  bind.mainSetOption(
+      key: 'relay-server', value: 'hdesk.yunjichuangzhi.cn');
   bind.mainSetOption(key: 'api-server', value: '');
+  await _applyHdeskManagedDesktopDefaults(appType);
   // await Firebase.initializeApp();
   _registerEventHandler();
   // Update the system theme.

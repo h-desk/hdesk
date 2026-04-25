@@ -16,13 +16,68 @@ typedef void (*FUNC_RUSTDESK_FREE_ARGS)( char**, int);
 typedef int (*FUNC_RUSTDESK_GET_APP_NAME)(wchar_t*, int);
 /// Note: `--server`, `--service` are already handled in [core_main.rs].
 const std::vector<std::string> parameters_white_list = {"--install", "--cm"};
+constexpr ULONGLONG kLikelyMissingHwcodecDllThresholdBytes = 29ull * 1024ull * 1024ull;
 
 const wchar_t* getWindowClassName();
+
+namespace {
+
+std::wstring GetSiblingLibraryPath(const wchar_t* library_name) {
+  wchar_t module_path[MAX_PATH] = {0};
+  DWORD path_length = ::GetModuleFileNameW(nullptr, module_path, MAX_PATH);
+  if (path_length == 0 || path_length >= MAX_PATH) {
+    return std::wstring(library_name);
+  }
+
+  std::wstring executable_path(module_path, path_length);
+  size_t separator = executable_path.find_last_of(L"\\/");
+  if (separator == std::wstring::npos) {
+    return std::wstring(library_name);
+  }
+  return executable_path.substr(0, separator + 1) + library_name;
+}
+
+ULONGLONG GetFileSizeBytes(const std::wstring& file_path) {
+  WIN32_FILE_ATTRIBUTE_DATA file_info = {0};
+  if (!::GetFileAttributesExW(file_path.c_str(), GetFileExInfoStandard,
+                              &file_info)) {
+    return 0;
+  }
+  ULARGE_INTEGER file_size = {0};
+  file_size.HighPart = file_info.nFileSizeHigh;
+  file_size.LowPart = file_info.nFileSizeLow;
+  return file_size.QuadPart;
+}
+
+bool WarnIfLikelyMissingHwcodec(const std::wstring& dll_path) {
+  ULONGLONG dll_size = GetFileSizeBytes(dll_path);
+  if (dll_size == 0 || dll_size >= kLikelyMissingHwcodecDllThresholdBytes) {
+    return false;
+  }
+
+  std::wstring message =
+      L"The current librustdesk.dll is too small and is likely missing hwcodec support.\n\n"
+      L"This commonly causes a black screen with Harmony clients.\n\n"
+      L"Please rebuild with:\n"
+      L"python build.py --flutter --skip-portable-pack --hwcodec\n"
+      L"or\n"
+      L"cargo build --features flutter,hwcodec --lib --release";
+  ::MessageBoxW(nullptr, message.c_str(), L"HDesk startup blocked",
+                MB_OK | MB_ICONERROR);
+  return true;
+}
+
+}  // namespace
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
-  HINSTANCE hInstance = LoadLibraryA("librustdesk.dll");
+  std::wstring rustdesk_dll_path = GetSiblingLibraryPath(L"librustdesk.dll");
+  if (WarnIfLikelyMissingHwcodec(rustdesk_dll_path)) {
+    return EXIT_FAILURE;
+  }
+
+  HINSTANCE hInstance = LoadLibraryW(rustdesk_dll_path.c_str());
   if (!hInstance)
   {
     std::cout << "Failed to load librustdesk.dll." << std::endl;

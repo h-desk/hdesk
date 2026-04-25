@@ -10,7 +10,7 @@ import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
-import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
+import 'package:flutter_hbb/desktop/pages/settings_dialog_utils.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
@@ -22,16 +22,15 @@ import 'package:flutter_hbb/plugin/manager.dart';
 import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
 
-const double _kTabWidth = 200;
-const double _kTabHeight = 42;
-const double _kCardFixedWidth = 540;
-const double _kCardLeftMargin = 15;
+const double _kSettingsDialogMaxWidth = 820;
+const double _kSettingsDialogMaxHeight = 720;
+const double _kCardFixedWidth = 760;
+const double _kCardLeftMargin = 0;
 const double _kContentHMargin = 15;
 const double _kContentHSubMargin = _kContentHMargin + 33;
 const double _kCheckBoxLeftMargin = 10;
@@ -40,15 +39,31 @@ const double _kListViewBottomMargin = 15;
 const double _kTitleFontSize = 20;
 const double _kContentFontSize = 15;
 const Color _accentColor = MyTheme.accent;
-const String _kSettingPageControllerTag = 'settingPageController';
-const String _kSettingPageTabKeyTag = 'settingPageTabKey';
+const String _kDesktopSettingsDialogTag = 'desktop-settings-dialog';
+const double _kSectionSpacing = 8;
+const double _kSettingsDialogHeaderHeight = 72;
+const double _kSettingsDialogChromeHeight = _kSettingsDialogHeaderHeight;
 
-class _TabInfo {
-  late final SettingsTabKey key;
-  late final String label;
-  late final IconData unselected;
-  late final IconData selected;
-  _TabInfo(this.key, this.label, this.unselected, this.selected);
+_DesktopSettingPageState? _activeSettingsPageState;
+
+Future<void> _openPathInSystemFileManager(String path) async {
+  try {
+    if (Platform.isWindows) {
+      await Process.start('explorer.exe', [path],
+          mode: ProcessStartMode.detached);
+      return;
+    }
+    if (Platform.isMacOS) {
+      await Process.start('open', [path], mode: ProcessStartMode.detached);
+      return;
+    }
+    if (Platform.isLinux) {
+      await Process.start('xdg-open', [path],
+          mode: ProcessStartMode.detached);
+    }
+  } catch (e) {
+    debugPrint('Failed to open directory $path: $e');
+  }
 }
 
 enum SettingsTabKey {
@@ -57,7 +72,6 @@ enum SettingsTabKey {
   network,
   display,
   plugin,
-  account,
   printer,
   about,
 }
@@ -76,37 +90,116 @@ class DesktopSettingPage extends StatefulWidget {
     if (!bind.isIncomingOnly()) SettingsTabKey.display,
     if (!isWeb && !bind.isIncomingOnly() && bind.pluginFeatureIsEnabled())
       SettingsTabKey.plugin,
-    if (!bind.isDisableAccount()) SettingsTabKey.account,
     // hdesk: printer tab removed
     SettingsTabKey.about,
   ];
 
   DesktopSettingPage({Key? key, required this.initialTabkey}) : super(key: key);
 
-  @override
-  State<DesktopSettingPage> createState() =>
-      _DesktopSettingPageState(initialTabkey);
+  static SettingsTabKey _normalizeInitialTab(SettingsTabKey page) {
+    return resolveVisibleSelection<SettingsTabKey>(
+          page,
+          tabKeys,
+          onFallback: (requested, fallback) {
+            debugPrint(
+              'Requested settings section $requested is hidden; falling back to $fallback.',
+            );
+          },
+        ) ??
+        SettingsTabKey.general;
+  }
 
-  static void switch2page(SettingsTabKey page) {
+  static void show({SettingsTabKey initialTabkey = SettingsTabKey.general}) {
     try {
-      int index = tabKeys.indexOf(page);
-      if (index == -1) {
+      if (tabKeys.isEmpty) {
         return;
       }
-      if (Get.isRegistered<PageController>(tag: _kSettingPageControllerTag)) {
-        DesktopTabPage.onAddSetting(initialPage: page);
-        PageController controller =
-            Get.find<PageController>(tag: _kSettingPageControllerTag);
-        Rx<SettingsTabKey> selected =
-            Get.find<Rx<SettingsTabKey>>(tag: _kSettingPageTabKeyTag);
-        selected.value = page;
-        controller.jumpToPage(index);
-      } else {
-        DesktopTabPage.onAddSetting(initialPage: page);
+      final resolvedInitialTab = _normalizeInitialTab(initialTabkey);
+      final dialogManager = gFFI.dialogManager;
+      if (dialogManager.existing(_kDesktopSettingsDialogTag) &&
+          _activeSettingsPageState != null) {
+        _activeSettingsPageState!.scrollToSection(resolvedInitialTab);
+        return;
       }
+      if (dialogManager.existing(_kDesktopSettingsDialogTag)) {
+        dialogManager.dismissByTag(_kDesktopSettingsDialogTag);
+      }
+      dialogManager.show(
+        tag: _kDesktopSettingsDialogTag,
+        clickMaskDismiss: true,
+        backDismiss: true,
+        (setState, close, context) {
+          final dialogSize = computeSettingsDialogSize(
+            MediaQuery.of(context).size,
+            preferredWidth: _kSettingsDialogMaxWidth,
+            preferredHeight: _kSettingsDialogMaxHeight,
+          );
+          final dialogContentHeight = dialogSize.height >
+                  _kSettingsDialogChromeHeight
+              ? dialogSize.height - _kSettingsDialogChromeHeight
+              : dialogSize.height;
+          return CustomAlertDialog(
+            scrollable: false,
+            titlePadding: EdgeInsets.zero,
+            contentPadding: 0,
+            title: Container(
+              height: _kSettingsDialogHeaderHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dialogTheme.backgroundColor ??
+                    Theme.of(context).cardColor,
+                border: Border(
+                  bottom: BorderSide(color: Theme.of(context).dividerColor),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const SizedBox(width: 48, height: 48),
+                  Expanded(
+                    child: Center(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.settings_rounded,
+                              color: _accentColor),
+                          const SizedBox(width: 12),
+                          Text(
+                              translate('Settings'),
+                            style: const TextStyle(fontSize: _kTitleFontSize),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    splashRadius: 18,
+                    onPressed: () => close(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            contentBoxConstraints: BoxConstraints(maxWidth: dialogSize.width),
+            content: SizedBox(
+              width: dialogSize.width,
+              height: dialogContentHeight,
+              child: DesktopSettingPage(initialTabkey: resolvedInitialTab),
+            ),
+            onCancel: close,
+          );
+        },
+      );
     } catch (e) {
       debugPrintStack(label: '$e');
     }
+  }
+
+  @override
+  State<DesktopSettingPage> createState() =>
+      _DesktopSettingPageState();
+
+  static void switch2page(SettingsTabKey page) {
+    show(initialTabkey: page);
   }
 }
 
@@ -115,8 +208,12 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
         TickerProviderStateMixin,
         AutomaticKeepAliveClientMixin,
         WidgetsBindingObserver {
-  late PageController controller;
-  late Rx<SettingsTabKey> selectedTab;
+  final ScrollController _scrollController = ScrollController();
+  late final Map<SettingsTabKey, GlobalKey> _sectionKeys = {
+    for (final tab in DesktopSettingPage.tabKeys) tab: GlobalKey()
+  };
+  SettingsTabKey? _pendingScrollTab;
+  int _pendingScrollRetries = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -124,25 +221,6 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   final RxBool _block = false.obs;
   final RxBool _canBeBlocked = false.obs;
   Timer? _videoConnTimer;
-
-  _DesktopSettingPageState(SettingsTabKey initialTabkey) {
-    var initialIndex = DesktopSettingPage.tabKeys.indexOf(initialTabkey);
-    if (initialIndex == -1) {
-      initialIndex = 0;
-    }
-    selectedTab = DesktopSettingPage.tabKeys[initialIndex].obs;
-    Get.put<Rx<SettingsTabKey>>(selectedTab, tag: _kSettingPageTabKeyTag);
-    controller = PageController(initialPage: initialIndex);
-    Get.put<PageController>(controller, tag: _kSettingPageControllerTag);
-    controller.addListener(() {
-      if (controller.page != null) {
-        int page = controller.page!.toInt();
-        if (page < DesktopSettingPage.tabKeys.length) {
-          selectedTab.value = DesktopSettingPage.tabKeys[page];
-        }
-      }
-    });
-  }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -155,7 +233,12 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   void initState() {
     super.initState();
+    _activeSettingsPageState = this;
     WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToSection(DesktopSettingPage._normalizeInitialTab(
+          widget.initialTabkey));
+    });
     _videoConnTimer =
         periodic_immediate(Duration(milliseconds: 1000), () async {
       if (!mounted) {
@@ -168,234 +251,133 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   @override
   void dispose() {
     super.dispose();
-    Get.delete<PageController>(tag: _kSettingPageControllerTag);
-    Get.delete<RxInt>(tag: _kSettingPageTabKeyTag);
+    if (identical(_activeSettingsPageState, this)) {
+      _activeSettingsPageState = null;
+    }
     WidgetsBinding.instance.removeObserver(this);
     _videoConnTimer?.cancel();
+    _scrollController.dispose();
   }
 
-  List<_TabInfo> _settingTabs() {
-    final List<_TabInfo> settingTabs = <_TabInfo>[];
-    for (final tab in DesktopSettingPage.tabKeys) {
-      switch (tab) {
-        case SettingsTabKey.general:
-          settingTabs.add(_TabInfo(
-              tab, 'General', Icons.settings_outlined, Icons.settings));
-          break;
-        case SettingsTabKey.safety:
-          settingTabs.add(_TabInfo(tab, 'Security',
-              Icons.enhanced_encryption_outlined, Icons.enhanced_encryption));
-          break;
-        case SettingsTabKey.network:
-          settingTabs
-              .add(_TabInfo(tab, 'Network', Icons.link_outlined, Icons.link));
-          break;
-        case SettingsTabKey.display:
-          settingTabs.add(_TabInfo(tab, 'Display',
-              Icons.desktop_windows_outlined, Icons.desktop_windows));
-          break;
-        case SettingsTabKey.plugin:
-          settingTabs.add(_TabInfo(
-              tab, 'Plugin', Icons.extension_outlined, Icons.extension));
-          break;
-        case SettingsTabKey.account:
-          settingTabs.add(
-              _TabInfo(tab, 'Account', Icons.person_outline, Icons.person));
-          break;
-        case SettingsTabKey.printer:
-          settingTabs
-              .add(_TabInfo(tab, 'Printer', Icons.print_outlined, Icons.print));
-          break;
-        case SettingsTabKey.about:
-          settingTabs
-              .add(_TabInfo(tab, 'About', Icons.info_outline, Icons.info));
-          break;
+  void scrollToSection(SettingsTabKey tab) {
+    _scrollToSection(tab, retriesLeft: 3);
+  }
+
+  Future<void> _scrollToSection(SettingsTabKey tab,
+      {int retriesLeft = 0}) async {
+    final targetContext = _sectionKeys[tab]?.currentContext;
+    if (targetContext == null) {
+      if (retriesLeft > 0) {
+        _pendingScrollTab = tab;
+        _pendingScrollRetries = retriesLeft - 1;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || _pendingScrollTab != tab) {
+            return;
+          }
+          _scrollToSection(tab, retriesLeft: _pendingScrollRetries);
+        });
+      } else {
+        debugPrint(
+          'Unable to scroll settings dialog to section $tab: context not ready.',
+        );
       }
+      return;
     }
-    return settingTabs;
+    _pendingScrollTab = null;
+    _pendingScrollRetries = 0;
+    await Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      alignment: 0.0,
+    );
   }
 
-  List<Widget> _children() {
-    final children = List<Widget>.empty(growable: true);
-    for (final tab in DesktopSettingPage.tabKeys) {
-      switch (tab) {
-        case SettingsTabKey.general:
-          children.add(const _General());
-          break;
-        case SettingsTabKey.safety:
-          children.add(const _Safety());
-          break;
-        case SettingsTabKey.network:
-          children.add(const _Network());
-          break;
-        case SettingsTabKey.display:
-          children.add(const _Display());
-          break;
-        case SettingsTabKey.plugin:
-          children.add(const _Plugin());
-          break;
-        case SettingsTabKey.account:
-          children.add(const _Account());
-          break;
-        case SettingsTabKey.printer:
-          children.add(const _Printer());
-          break;
-        case SettingsTabKey.about:
-          children.add(const _About());
-          break;
-      }
+  Widget _buildSection(SettingsTabKey tab) {
+    switch (tab) {
+      case SettingsTabKey.general:
+        return const _General(embedded: true);
+      case SettingsTabKey.safety:
+        return const _Safety(embedded: true);
+      case SettingsTabKey.network:
+        return const _Network(embedded: true);
+      case SettingsTabKey.display:
+        return const _Display(embedded: true);
+      case SettingsTabKey.plugin:
+        return const _Plugin(embedded: true);
+      case SettingsTabKey.printer:
+        return const _Printer(embedded: true);
+      case SettingsTabKey.about:
+        return const _About(embedded: true);
     }
-    return children;
   }
 
-  Widget _buildBlock({required List<Widget> children}) {
+  List<Widget> _sections() {
+    return DesktopSettingPage.tabKeys
+        .map(
+          (tab) => Container(
+            key: _sectionKeys[tab],
+            margin: const EdgeInsets.only(bottom: _kSectionSpacing),
+            child: _buildSection(tab),
+          ),
+        )
+        .toList();
+  }
+
+  Widget _buildBlock({required Widget child}) {
     // check both mouseMoveTime and videoConnCount
     return Obx(() {
       final videoConnBlock =
           _canBeBlocked.value && stateGlobal.videoConnCount > 0;
-      return Stack(children: [
-        buildRemoteBlock(
-          block: _block,
-          mask: false,
-          use: canBeBlocked,
-          child: preventMouseKeyBuilder(
-            child: Row(children: children),
-            block: videoConnBlock,
+      return Stack(
+        children: [
+          buildRemoteBlock(
+            block: _block,
+            mask: false,
+            use: canBeBlocked,
+            child: preventMouseKeyBuilder(
+              child: child,
+              block: videoConnBlock,
+            ),
           ),
-        ),
-        if (videoConnBlock)
-          Container(
-            color: Colors.black.withOpacity(0.5),
-          )
-      ]);
+          if (videoConnBlock)
+            Container(
+              color: Colors.black.withOpacity(0.5),
+            )
+        ],
+      );
     });
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return Scaffold(
-      backgroundColor: Theme.of(context).colorScheme.background,
-      body: _buildBlock(
-        children: <Widget>[
-          SizedBox(
-            width: _kTabWidth,
+    return Container(
+      color: Theme.of(context).colorScheme.background,
+      child: _buildBlock(
+        child: Scrollbar(
+          controller: _scrollController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.only(right: 8),
             child: Column(
-              children: [
-                _header(context),
-                Flexible(child: _listView(tabs: _settingTabs())),
-              ],
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: _sections(),
             ),
           ),
-          const VerticalDivider(width: 1),
-          Expanded(
-            child: Container(
-              color: Theme.of(context).scaffoldBackgroundColor,
-              child: PageView(
-                controller: controller,
-                physics: NeverScrollableScrollPhysics(),
-                children: _children(),
-              ),
-            ),
-          )
-        ],
-      ),
-    );
-  }
-
-  Widget _header(BuildContext context) {
-    final settingsText = Text(
-      translate('Settings'),
-      textAlign: TextAlign.left,
-      style: const TextStyle(
-        color: _accentColor,
-        fontSize: _kTitleFontSize,
-        fontWeight: FontWeight.w400,
-      ),
-    );
-    return Row(
-      children: [
-        if (isWeb)
-          IconButton(
-            onPressed: () {
-              if (Navigator.canPop(context)) {
-                Navigator.pop(context);
-              }
-            },
-            icon: Icon(Icons.arrow_back),
-          ).marginOnly(left: 5),
-        if (isWeb)
-          SizedBox(
-            height: 62,
-            child: Align(
-              alignment: Alignment.center,
-              child: settingsText,
-            ),
-          ).marginOnly(left: 20),
-        if (!isWeb)
-          SizedBox(
-            height: 62,
-            child: settingsText,
-          ).marginOnly(left: 20, top: 10),
-        const Spacer(),
-      ],
-    );
-  }
-
-  Widget _listView({required List<_TabInfo> tabs}) {
-    final scrollController = ScrollController();
-    return ListView(
-      controller: scrollController,
-      children: tabs.map((tab) => _listItem(tab: tab)).toList(),
-    );
-  }
-
-  Widget _listItem({required _TabInfo tab}) {
-    return Obx(() {
-      bool selected = tab.key == selectedTab.value;
-      return SizedBox(
-        width: _kTabWidth,
-        height: _kTabHeight,
-        child: InkWell(
-          onTap: () {
-            if (selectedTab.value != tab.key) {
-              int index = DesktopSettingPage.tabKeys.indexOf(tab.key);
-              if (index == -1) {
-                return;
-              }
-              controller.jumpToPage(index);
-            }
-            selectedTab.value = tab.key;
-          },
-          child: Row(children: [
-            Container(
-              width: 4,
-              height: _kTabHeight * 0.7,
-              color: selected ? _accentColor : null,
-            ),
-            Icon(
-              selected ? tab.selected : tab.unselected,
-              color: selected ? _accentColor : null,
-              size: 20,
-            ).marginOnly(left: 13, right: 10),
-            Text(
-              translate(tab.label),
-              style: TextStyle(
-                  color: selected ? _accentColor : null,
-                  fontWeight: FontWeight.w400,
-                  fontSize: _kContentFontSize),
-            ),
-          ]),
         ),
-      );
-    });
+      ),
+    );
   }
 }
 
 //#region pages
 
 class _General extends StatefulWidget {
-  const _General({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _General({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_General> createState() => _GeneralState();
@@ -406,21 +388,41 @@ class _GeneralState extends State<_General> {
       isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
   RxBool serviceBtnEnabled = true.obs;
 
+  bool _showAdvancedGeneralSettings() {
+    return bind.mainGetBuildinOption(key: 'show-advanced-general-settings') ==
+        'Y';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scrollController = ScrollController();
-    return ListView(
-      controller: scrollController,
-      children: [
+    final showAdvancedGeneralSettings = _showAdvancedGeneralSettings();
+    final children = <Widget>[
+      theme(),
+      _Card(title: 'Language', children: [language()]),
+      if (!isWeb) record(context),
+    ];
+
+    if (showAdvancedGeneralSettings) {
+      children.insertAll(0, [
         if (!isWeb) service(),
-        theme(),
-        _Card(title: 'Language', children: [language()]),
+      ]);
+      children.addAll([
         if (!isWeb) hwcodec(),
         if (!isWeb) audio(context),
-        if (!isWeb) record(context),
         if (!isWeb) WaylandCard(),
-        other()
-      ],
+        other(),
+      ]);
+    }
+
+    if (widget.embedded) {
+      return Column(children: children);
+    }
+
+    final scrollController = ScrollController();
+
+    return ListView(
+      controller: scrollController,
+      children: children,
     ).marginOnly(bottom: _kListViewBottomMargin);
   }
 
@@ -713,7 +715,8 @@ class _GeneralState extends State<_General> {
               Expanded(
                 child: GestureDetector(
                     onTap: root_dir_exists
-                        ? () => launchUrl(Uri.file(root_dir))
+                    ? () => unawaited(
+                      _openPathInSystemFileManager(root_dir))
                         : null,
                     child: Text(
                       root_dir,
@@ -734,7 +737,8 @@ class _GeneralState extends State<_General> {
               Expanded(
                 child: GestureDetector(
                     onTap: user_dir_exists
-                        ? () => launchUrl(Uri.file(user_dir))
+                    ? () => unawaited(
+                      _openPathInSystemFileManager(user_dir))
                         : null,
                     child: Text(
                       user_dir,
@@ -813,7 +817,9 @@ enum _AccessMode {
 }
 
 class _Safety extends StatefulWidget {
-  const _Safety({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _Safety({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_Safety> createState() => _SafetyState();
@@ -823,32 +829,55 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
   bool locked = bind.mainIsInstalled();
-  final scrollController = ScrollController();
+  ScrollController? _scrollController;
+
+  ScrollController get _effectiveScrollController =>
+      _scrollController ??= ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController?.dispose();
+    super.dispose();
+  }
+
+  bool _showAdvancedSecuritySettings() {
+    return bind.mainGetBuildinOption(key: 'show-advanced-security-settings') ==
+        'Y';
+  }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final showAdvancedSecuritySettings = _showAdvancedSecuritySettings();
+    final content = Column(
+      children: [
+        _lock(locked, 'Unlock Security Settings', () {
+          locked = false;
+          setState(() => {});
+        }),
+        preventMouseKeyBuilder(
+          block: locked,
+          child: Column(children: [
+            if (showAdvancedSecuritySettings) permissions(context),
+            password(context),
+            if (showAdvancedSecuritySettings)
+              _Card(title: '2FA', children: [tfa()]),
+            if (showAdvancedSecuritySettings && !isChangeIdDisabled())
+              _Card(title: 'ID', children: [changeId()]),
+            if (showAdvancedSecuritySettings) more(context),
+          ]),
+        ),
+      ],
+    );
+
+    if (widget.embedded) {
+      return content;
+    }
+
     return SingleChildScrollView(
-        controller: scrollController,
-        child: Column(
-          children: [
-            _lock(locked, 'Unlock Security Settings', () {
-              locked = false;
-              setState(() => {});
-            }),
-            preventMouseKeyBuilder(
-              block: locked,
-              child: Column(children: [
-                permissions(context),
-                password(context),
-                _Card(title: '2FA', children: [tfa()]),
-                if (!isChangeIdDisabled())
-                  _Card(title: 'ID', children: [changeId()]),
-                more(context),
-              ]),
-            ),
-          ],
-        )).marginOnly(bottom: _kListViewBottomMargin);
+      controller: _effectiveScrollController,
+      child: content,
+    ).marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget tfa() {
@@ -1060,9 +1089,13 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
               _OptionCheckBox(context, 'Enable blocking user input',
                   kOptionEnableBlockInput,
                   enabled: enabled, fakeValue: fakeValue),
-            _OptionCheckBox(context, 'Enable remote configuration modification',
-                kOptionAllowRemoteConfigModification,
-                enabled: enabled, fakeValue: fakeValue),
+            if (_showAdvancedSecuritySettings())
+              _OptionCheckBox(
+                  context,
+                  'Enable remote configuration modification',
+                  kOptionAllowRemoteConfigModification,
+                  enabled: enabled,
+                  fakeValue: fakeValue),
           ],
         ),
       ]);
@@ -1072,160 +1105,13 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
   }
 
   Widget password(BuildContext context) {
-    return ChangeNotifierProvider.value(
-        value: gFFI.serverModel,
-        child: Consumer<ServerModel>(builder: ((context, model, child) {
-          List<String> passwordKeys = [
-            kUseTemporaryPassword,
-            kUsePermanentPassword,
-            kUseBothPasswords,
-          ];
-          List<String> passwordValues = [
-            translate('Use one-time password'),
-            translate('Use permanent password'),
-            translate('Use both passwords'),
-          ];
-          bool tmpEnabled = model.verificationMethod != kUsePermanentPassword;
-          bool permEnabled = model.verificationMethod != kUseTemporaryPassword;
-          String currentValue =
-              passwordValues[passwordKeys.indexOf(model.verificationMethod)];
-          List<Widget> radios = passwordValues
-              .map((value) => _Radio<String>(
-                    context,
-                    value: value,
-                    groupValue: currentValue,
-                    label: value,
-                    onChanged: locked
-                        ? null
-                        : ((value) async {
-                            callback() async {
-                              await model.setVerificationMethod(
-                                  passwordKeys[passwordValues.indexOf(value)]);
-                              await model.updatePasswordModel();
-                            }
-
-                            if (value ==
-                                    passwordValues[passwordKeys
-                                        .indexOf(kUsePermanentPassword)] &&
-                                (await bind.mainGetCommon(
-                                        key: "permanent-password-set")) !=
-                                    "true") {
-                              if (isChangePermanentPasswordDisabled()) {
-                                await callback();
-                                return;
-                              }
-                              setPasswordDialog(notEmptyCallback: callback);
-                            } else {
-                              await callback();
-                            }
-                          }),
-                  ))
-              .toList();
-
-          var onChanged = tmpEnabled && !locked
-              ? (value) {
-                  if (value != null) {
-                    () async {
-                      await model.setTemporaryPasswordLength(value.toString());
-                      await model.updatePasswordModel();
-                    }();
-                  }
-                }
-              : null;
-          List<Widget> lengthRadios = ['6', '8', '10']
-              .map((value) => GestureDetector(
-                    child: Row(
-                      children: [
-                        Radio(
-                            value: value,
-                            groupValue: model.temporaryPasswordLength,
-                            onChanged: onChanged),
-                        Text(
-                          value,
-                          style: TextStyle(
-                              color: disabledTextColor(
-                                  context, onChanged != null)),
-                        ),
-                      ],
-                    ).paddingOnly(right: 10),
-                    onTap: () => onChanged?.call(value),
-                  ))
-              .toList();
-
-          final isOptFixedNumOTP =
-              isOptionFixed(kOptionAllowNumericOneTimePassword);
-          final isNumOPTChangable = !isOptFixedNumOTP && tmpEnabled && !locked;
-          final numericOneTimePassword = GestureDetector(
-            child: InkWell(
-                child: Row(
-              children: [
-                Checkbox(
-                        value: model.allowNumericOneTimePassword,
-                        onChanged: isNumOPTChangable
-                            ? (bool? v) {
-                                model.switchAllowNumericOneTimePassword();
-                              }
-                            : null)
-                    .marginOnly(right: 5),
-                Expanded(
-                    child: Text(
-                  translate('Numeric one-time password'),
-                  style: TextStyle(
-                      color: disabledTextColor(context, isNumOPTChangable)),
-                ))
-              ],
-            )),
-            onTap: isNumOPTChangable
-                ? () => model.switchAllowNumericOneTimePassword()
-                : null,
-          ).marginOnly(left: _kContentHSubMargin - 5);
-
-          final modeKeys = <String>[
-            'password',
-            'click',
-            defaultOptionApproveMode
-          ];
-          final modeValues = [
-            translate('Accept sessions via password'),
-            translate('Accept sessions via click'),
-            translate('Accept sessions via both'),
-          ];
-          var modeInitialKey = model.approveMode;
-          if (!modeKeys.contains(modeInitialKey)) {
-            modeInitialKey = defaultOptionApproveMode;
-          }
-          final usePassword = model.approveMode != 'click';
-
-          final isApproveModeFixed = isOptionFixed(kOptionApproveMode);
-          return _Card(title: 'Password', children: [
-            ComboBox(
-              enabled: !locked && !isApproveModeFixed,
-              keys: modeKeys,
-              values: modeValues,
-              initialKey: modeInitialKey,
-              onChanged: (key) => model.setApproveMode(key),
-            ).marginOnly(left: _kContentHMargin),
-            if (usePassword) radios[0],
-            if (usePassword)
-              _SubLabeledWidget(
-                  context,
-                  'One-time password length',
-                  Row(
-                    children: [
-                      ...lengthRadios,
-                    ],
-                  ),
-                  enabled: tmpEnabled && !locked),
-            if (usePassword) numericOneTimePassword,
-            if (usePassword) radios[1],
-            if (usePassword && !isChangePermanentPasswordDisabled())
-              _SubButton('Set permanent password', setPasswordDialog,
-                  permEnabled && !locked),
-            // if (usePassword)
-            //   hide_cm(!locked).marginOnly(left: _kContentHSubMargin - 6),
-            if (usePassword) radios[2],
-          ]);
-        })));
+    return _Card(title: 'Password', children: [
+      _SubButton(
+        'Set permanent password',
+        setPasswordDialog,
+        !locked && !isChangePermanentPasswordDisabled(),
+      )
+    ]);
   }
 
   Widget more(BuildContext context) {
@@ -1529,7 +1415,9 @@ class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
 }
 
 class _Network extends StatefulWidget {
-  const _Network({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _Network({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_Network> createState() => _NetworkState();
@@ -1540,23 +1428,41 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
   bool get wantKeepAlive => true;
   bool locked = !isWeb && bind.mainIsInstalled();
 
-  final scrollController = ScrollController();
+  ScrollController? _scrollController;
+
+  ScrollController get _effectiveScrollController =>
+      _scrollController ??= ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController?.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    return ListView(controller: scrollController, children: [
-      _lock(locked, 'Unlock Network Settings', () {
-        locked = false;
-        setState(() => {});
-      }),
-      preventMouseKeyBuilder(
-        block: locked,
-        child: Column(children: [
-          network(context),
-        ]),
-      ),
-    ]).marginOnly(bottom: _kListViewBottomMargin);
+    final content = Column(
+      children: [
+        _lock(locked, 'Unlock Network Settings', () {
+          locked = false;
+          setState(() => {});
+        }),
+        preventMouseKeyBuilder(
+          block: locked,
+          child: Column(children: [
+            network(context),
+          ]),
+        ),
+      ],
+    );
+
+    if (widget.embedded) {
+      return content;
+    }
+
+    return ListView(controller: _effectiveScrollController, children: [content])
+        .marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget network(BuildContext context) {
@@ -1728,25 +1634,48 @@ class _NetworkState extends State<_Network> with AutomaticKeepAliveClientMixin {
 }
 
 class _Display extends StatefulWidget {
-  const _Display({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _Display({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_Display> createState() => _DisplayState();
 }
 
 class _DisplayState extends State<_Display> {
+  bool _showAdvancedDisplaySettings() {
+    return bind.mainGetBuildinOption(key: 'show-advanced-display-settings') ==
+        'Y';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scrollController = ScrollController();
-    return ListView(controller: scrollController, children: [
-      viewStyle(context),
-      scrollStyle(context),
+    final showAdvancedDisplaySettings = _showAdvancedDisplaySettings();
+    final children = <Widget>[
       imageQuality(context),
-      codec(context),
-      if (isDesktop) trackpadSpeed(context),
-      if (!isWeb) privacyModeImpl(context),
-      other(context),
-    ]).marginOnly(bottom: _kListViewBottomMargin);
+    ];
+
+    if (showAdvancedDisplaySettings) {
+      children.addAll([
+        viewStyle(context),
+        scrollStyle(context),
+        codec(context),
+        if (isDesktop) trackpadSpeed(context),
+        if (!isWeb) privacyModeImpl(context),
+        other(context),
+      ]);
+    }
+
+    if (widget.embedded) {
+      return Column(children: children);
+    }
+
+    final scrollController = ScrollController();
+
+    return ListView(
+      controller: scrollController,
+      children: children,
+    ).marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget viewStyle(BuildContext context) {
@@ -2002,99 +1931,6 @@ class _DisplayState extends State<_Display> {
   }
 }
 
-class _Account extends StatefulWidget {
-  const _Account({Key? key}) : super(key: key);
-
-  @override
-  State<_Account> createState() => _AccountState();
-}
-
-class _AccountState extends State<_Account> {
-  @override
-  Widget build(BuildContext context) {
-    final scrollController = ScrollController();
-    return ListView(
-      controller: scrollController,
-      children: [
-        _Card(title: 'Account', children: [accountAction(), useInfo()]),
-      ],
-    ).marginOnly(bottom: _kListViewBottomMargin);
-  }
-
-  Widget accountAction() {
-    return Obx(() => _Button(
-        gFFI.userModel.userName.value.isEmpty
-            ? 'Login'
-            : '${translate('Logout')} (${gFFI.userModel.accountLabelWithHandle})',
-        () => {
-              gFFI.userModel.userName.value.isEmpty
-                  ? loginDialog()
-                  : logOutConfirmDialog()
-            }));
-  }
-
-  Widget useInfo() {
-    return Obx(() => Offstage(
-          offstage: gFFI.userModel.userName.value.isEmpty,
-          child: Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Builder(builder: (context) {
-              final avatarWidget = _buildUserAvatar();
-              return Row(
-                children: [
-                  if (avatarWidget != null) avatarWidget,
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          gFFI.userModel.displayNameOrUserName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        SelectionArea(
-                          child: Text(
-                            '@${gFFI.userModel.userName.value}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color:
-                                  Theme.of(context).textTheme.bodySmall?.color,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            }),
-          ),
-        )).marginOnly(left: 18, top: 16);
-  }
-
-  Widget? _buildUserAvatar() {
-    // Resolve relative avatar path at display time
-    final avatar =
-        bind.mainResolveAvatarUrl(avatar: gFFI.userModel.avatar.value);
-    return buildAvatarWidget(
-      avatar: avatar,
-      size: 44,
-    );
-  }
-}
-
 class _Checkbox extends StatefulWidget {
   final String label;
   final bool Function() getValue;
@@ -2147,7 +1983,9 @@ class _CheckboxState extends State<_Checkbox> {
 }
 
 class _Plugin extends StatefulWidget {
-  const _Plugin({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _Plugin({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_Plugin> createState() => _PluginState();
@@ -2155,15 +1993,39 @@ class _Plugin extends StatefulWidget {
 
 class _PluginState extends State<_Plugin> {
   @override
+  void initState() {
+    super.initState();
+    if (!widget.embedded) {
+      bind.pluginListReload();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    bind.pluginListReload();
-    final scrollController = ScrollController();
     return ChangeNotifierProvider.value(
       value: pluginManager,
       child: Consumer<PluginManager>(builder: (context, model, child) {
+        final children = model.plugins.map((entry) => pluginCard(entry)).toList();
+        if (widget.embedded && children.isEmpty) {
+          return _Card(title: 'Plugin', children: [
+            Text(
+              translate('No plugins available.'),
+            ).marginOnly(left: _kContentHMargin),
+            _Button('Reload', () => bind.pluginListReload()),
+          ]);
+        }
+        if (widget.embedded) {
+          return Column(children: [
+            _Card(title: 'Plugin', children: [
+              _Button('Reload', () => bind.pluginListReload()),
+            ]),
+            ...children,
+          ]);
+        }
+        final scrollController = ScrollController();
         return ListView(
           controller: scrollController,
-          children: model.plugins.map((entry) => pluginCard(entry)).toList(),
+          children: children,
         ).marginOnly(bottom: _kListViewBottomMargin);
       }),
     );
@@ -2177,22 +2039,12 @@ class _PluginState extends State<_Plugin> {
       ),
     );
   }
-
-  Widget accountAction() {
-    return Obx(() => _Button(
-        gFFI.userModel.userName.value.isEmpty
-            ? 'Login'
-            : '${translate('Logout')} (${gFFI.userModel.accountLabelWithHandle})',
-        () => {
-              gFFI.userModel.userName.value.isEmpty
-                  ? loginDialog()
-                  : logOutConfirmDialog()
-            }));
-  }
 }
 
 class _Printer extends StatefulWidget {
-  const _Printer({super.key});
+  final bool embedded;
+
+  const _Printer({this.embedded = false});
 
   @override
   State<_Printer> createState() => __PrinterState();
@@ -2201,11 +2053,19 @@ class _Printer extends StatefulWidget {
 class __PrinterState extends State<_Printer> {
   @override
   Widget build(BuildContext context) {
-    final scrollController = ScrollController();
-    return ListView(controller: scrollController, children: [
+    final children = [
       outgoing(context),
       incoming(context),
-    ]).marginOnly(bottom: _kListViewBottomMargin);
+    ];
+
+    if (widget.embedded) {
+      return Column(children: children);
+    }
+
+    final scrollController = ScrollController();
+
+    return ListView(controller: scrollController, children: children)
+        .marginOnly(bottom: _kListViewBottomMargin);
   }
 
   Widget outgoing(BuildContext context) {
@@ -2339,14 +2199,26 @@ class __PrinterState extends State<_Printer> {
 }
 
 class _About extends StatefulWidget {
-  const _About({Key? key}) : super(key: key);
+  final bool embedded;
+
+  const _About({Key? key, this.embedded = false}) : super(key: key);
 
   @override
   State<_About> createState() => _AboutState();
 }
 
 class _AboutState extends State<_About> {
-  static const String _kAboutUpdateHandler = 'about_check_software_update_finish';
+  static const String _kAboutUpdateHandler =
+      'about_check_software_update_finish';
+  final RxBool _isCheckingForUpdates = false.obs;
+
+  BoxDecoration _aboutPanelDecoration(BuildContext context) {
+    return BoxDecoration(
+      color: Theme.of(context).cardColor,
+      borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: Theme.of(context).dividerColor),
+    );
+  }
 
   @override
   void initState() {
@@ -2355,7 +2227,31 @@ class _AboutState extends State<_About> {
       kCheckSoftwareUpdateFinish,
       _kAboutUpdateHandler,
       (Map<String, dynamic> evt) async {
-        stateGlobal.updateUrl.value = evt['url'] is String ? evt['url'] : '';
+        _isCheckingForUpdates.value = false;
+        final updateUrl = evt['url'] is String ? evt['url'] as String : '';
+        final status = evt['status'] is String ? evt['status'] as String : '';
+        final error = evt['error'] is String ? evt['error'] as String : '';
+
+        stateGlobal.updateUrl.value = updateUrl;
+        if (error.isNotEmpty) {
+          msgBox(
+            gFFI.sessionId,
+            'custom-nocancel-hasclose',
+            '检查更新',
+            error,
+            '',
+            gFFI.dialogManager,
+          );
+        } else if (status == 'up-to-date') {
+          msgBox(
+            gFFI.sessionId,
+            'custom-nocancel-hasclose',
+            '检查更新',
+            '当前已是最新版本。',
+            '',
+            gFFI.dialogManager,
+          );
+        }
       },
       replace: true,
     );
@@ -2369,97 +2265,187 @@ class _AboutState extends State<_About> {
   }
 
   void _checkForUpdates() {
+    if (_isCheckingForUpdates.value) {
+      return;
+    }
+    _isCheckingForUpdates.value = true;
     stateGlobal.updateUrl.value = '';
     bind.mainGetSoftwareUpdateUrl();
   }
 
-  String _replaceBrandName(String text) {
-    return text.replaceAll('RustDesk', bind.mainGetAppNameSync());
+  Widget _buildAboutMetaChip(
+    BuildContext context, {
+    required String label,
+    required String value,
+  }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final titleColor = Theme.of(context).textTheme.bodySmall?.color;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Theme.of(context).dividerColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: titleColor?.withOpacity(0.7),
+            ),
+          ),
+          const SizedBox(height: 4),
+          SelectionArea(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAboutLinkTile(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    final textColor = Theme.of(context).textTheme.bodyMedium?.color;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          decoration: _aboutPanelDecoration(context),
+          child: Row(
+            children: [
+              Icon(icon, size: 18, color: _accentColor),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: textColor,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.open_in_new_rounded,
+                size: 16,
+                color: textColor?.withOpacity(0.55),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Widget _buildMaintenanceCard(BuildContext context) {
-    final borderColor = Theme.of(context).dividerColor;
+    final canDirectUpdate = isWindows || isMacOS;
     final titleStyle = Theme.of(context)
         .textTheme
         .titleMedium
         ?.copyWith(fontWeight: FontWeight.w600);
-    final bodyStyle = Theme.of(context).textTheme.bodyMedium;
+    final bodyStyle = Theme.of(context)
+        .textTheme
+        .bodyMedium
+        ?.copyWith(height: 1.4);
     return Obx(() {
       final updateUrl = stateGlobal.updateUrl.value;
-      final appName = bind.mainGetAppNameSync();
-      final installable = isWindows && !bind.isDisableInstallation();
-      final notInstalled = installable && !bind.mainIsInstalled();
-      final lowerVersion = installable && bind.mainIsInstalledLowerVersion();
       final hasUpdate = updateUrl.isNotEmpty;
+      final isChecking = _isCheckingForUpdates.value;
       final actionButtons = <Widget>[
         OutlinedButton.icon(
-          onPressed: _checkForUpdates,
+          onPressed: isChecking ? null : _checkForUpdates,
           icon: const Icon(Icons.refresh_rounded, size: 16),
-          label: const Text('检查更新'),
+          label: Text(translate(
+            isChecking ? 'Checking for updates...' : 'Check for updates',
+          )),
         ),
       ];
       if (hasUpdate) {
         actionButtons.add(ElevatedButton.icon(
           onPressed: () {
-            if ((isWindows || isMacOS) && bind.mainIsInstalled()) {
+            if (canDirectUpdate) {
               handleUpdate(updateUrl);
             } else {
               launchUrlString(kHdeskPortalUrl);
             }
           },
           icon: const Icon(Icons.system_update_alt_rounded, size: 16),
-          label: Text(translate((isWindows || isMacOS) && bind.mainIsInstalled()
-              ? 'Update'
-              : 'Download')),
-        ));
-      }
-      if (notInstalled) {
-        actionButtons.add(ElevatedButton.icon(
-          onPressed: bind.mainGotoInstall,
-          icon: const Icon(Icons.download_done_rounded, size: 16),
-          label: Text('${translate('Install')} $appName'),
-        ));
-      } else if (lowerVersion) {
-        actionButtons.add(ElevatedButton.icon(
-          onPressed: bind.mainUpdateMe,
-          icon: const Icon(Icons.upgrade_rounded, size: 16),
-          label: Text(translate('Click to upgrade')),
+          label: Text(translate('Update')),
         ));
       }
       return Container(
         width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: borderColor),
-          color: Theme.of(context).colorScheme.background,
-        ),
+        padding: const EdgeInsets.all(16),
+        decoration: _aboutPanelDecoration(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('${translate('Installation')} / ${translate('Update')}',
-                    style: titleStyle)
-                .marginOnly(bottom: 8),
-            if (notInstalled)
-              Text(
-                _replaceBrandName(translate('install_tip')),
-                style: bodyStyle,
-              ).marginOnly(bottom: 8),
-            if (lowerVersion)
-              Text(
-                translate('Your installation is lower version.'),
-                style: bodyStyle,
-              ).marginOnly(bottom: 8),
-            if (hasUpdate)
-              Text(
-                '${translate("new-version-of-{${appName}}-tip")} (${bind.mainGetNewVersion()}).',
-                style: bodyStyle,
-              ).marginOnly(bottom: 8),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: _accentColor.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.system_update_alt_rounded,
+                    color: _accentColor,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        translate('Check for software update'),
+                        style: titleStyle,
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        hasUpdate
+                            ? (canDirectUpdate
+                                ? translate(
+                                    'A newer version is available and can be downloaded and installed directly.')
+                                : translate(
+                                    'A newer version is available. Visit the website to download the update.'))
+                            : translate(
+                                'Check and get the latest stable version of HDesk.'),
+                        style: bodyStyle,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
             Wrap(
+              alignment: WrapAlignment.start,
               spacing: 12,
               runSpacing: 12,
               children: actionButtons,
-            ),
+            ).marginOnly(top: hasUpdate ? 14 : 16),
           ],
         ),
       ).marginSymmetric(vertical: 4.0);
@@ -2469,89 +2455,117 @@ class _AboutState extends State<_About> {
   @override
   Widget build(BuildContext context) {
     return futureBuilder(future: () async {
-      final license = await bind.mainGetLicense();
       final version = await bind.mainGetVersion();
       final buildDate = await bind.mainGetBuildDate();
-      final fingerprint = await bind.mainGetFingerprint();
       return {
-        'license': license,
         'version': version,
         'buildDate': buildDate,
-        'fingerprint': fingerprint
+        'copyrightYear': DateTime.now().toString().substring(0, 4),
       };
     }(), hasData: (data) {
-      final license = data['license'].toString();
       final version = data['version'].toString();
       final buildDate = data['buildDate'].toString();
-      final fingerprint = data['fingerprint'].toString();
-      const linkStyle = TextStyle(decoration: TextDecoration.underline);
+      final copyrightYear = data['copyrightYear'].toString();
+      final card = _Card(title: translate('About HDesk'), children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const SizedBox(height: 8.0),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: _aboutPanelDecoration(context),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'HDesk',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    translate('Desktop remote control client'),
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.color
+                              ?.withOpacity(0.75),
+                        ),
+                  ),
+                  const SizedBox(height: 14),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      _buildAboutMetaChip(
+                        context,
+                        label: translate('Version'),
+                        value: version,
+                      ),
+                      _buildAboutMetaChip(
+                        context,
+                        label: translate('Build Date'),
+                        value: buildDate,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            _buildMaintenanceCard(context),
+            _buildAboutLinkTile(
+              context,
+              icon: Icons.privacy_tip_outlined,
+              label: translate('Privacy Statement'),
+              onTap: () {
+                launchUrlString(kHdeskPrivacyUrl);
+              },
+            ),
+            _buildAboutLinkTile(
+              context,
+              icon: Icons.description_outlined,
+              label: translate('End-user license agreement'),
+              onTap: () {
+                launchUrlString(kHdeskUserAgreementUrl);
+              },
+            ).marginOnly(top: 8),
+            _buildAboutLinkTile(
+              context,
+              icon: Icons.language_rounded,
+              label: translate('Website'),
+              onTap: () {
+                launchUrlString(kHdeskPortalUrl);
+              },
+            ).marginOnly(top: 8),
+            const SizedBox(height: 12),
+            SelectionArea(
+              child: Text(
+                'Copyright © $copyrightYear 苏州云极创智科技有限公司',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.color
+                          ?.withOpacity(0.72),
+                    ),
+              ).marginSymmetric(vertical: 4.0),
+            ),
+          ],
+        ).marginOnly(left: _kContentHMargin)
+      ]);
+
+      if (widget.embedded) {
+        return card;
+      }
+
       final scrollController = ScrollController();
+
       return SingleChildScrollView(
         controller: scrollController,
-        child: _Card(title: translate('About HDesk'), children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(
-                height: 8.0,
-              ),
-              SelectionArea(
-                  child: Text('${translate('Version')}: $version')
-                      .marginSymmetric(vertical: 4.0)),
-              SelectionArea(
-                  child: Text('${translate('Build Date')}: $buildDate')
-                      .marginSymmetric(vertical: 4.0)),
-              if (!isWeb)
-                SelectionArea(
-                    child: Text('${translate('Fingerprint')}: $fingerprint')
-                        .marginSymmetric(vertical: 4.0)),
-              _buildMaintenanceCard(context),
-              InkWell(
-                  onTap: () {
-                    launchUrlString(kHdeskPortalUrl);
-                  },
-                  child: Text(
-                    translate('Privacy Statement'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              InkWell(
-                  onTap: () {
-                    launchUrlString(kHdeskPortalUrl);
-                  },
-                  child: Text(
-                    translate('Website'),
-                    style: linkStyle,
-                  ).marginSymmetric(vertical: 4.0)),
-              Container(
-                decoration: const BoxDecoration(color: Color(0xFF2c8cff)),
-                padding:
-                    const EdgeInsets.symmetric(vertical: 24, horizontal: 8),
-                child: SelectionArea(
-                    child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Copyright © ${DateTime.now().toString().substring(0, 4)} 云集创智（深圳）科技有限公司\n$license',
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          Text(
-                            translate('Slogan_tip'),
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800,
-                                color: Colors.white),
-                          )
-                        ],
-                      ),
-                    ),
-                  ],
-                )),
-              ).marginSymmetric(vertical: 4.0)
-            ],
-          ).marginOnly(left: _kContentHMargin)
-        ]),
+        child: card,
       );
     });
   }
@@ -2955,51 +2969,6 @@ Widget _lock(
           ),
         ],
       ));
-}
-
-_LabeledTextField(
-    BuildContext context,
-    String label,
-    TextEditingController controller,
-    String errorText,
-    bool enabled,
-    bool secure) {
-  return Table(
-    columnWidths: const {
-      0: FixedColumnWidth(150),
-      1: FlexColumnWidth(),
-    },
-    defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-    children: [
-      TableRow(
-        children: [
-          Padding(
-            padding: const EdgeInsets.only(right: 10),
-            child: Text(
-              '${translate(label)}:',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 16,
-                color: disabledTextColor(context, enabled),
-              ),
-            ),
-          ),
-          TextField(
-            controller: controller,
-            enabled: enabled,
-            obscureText: secure,
-            autocorrect: false,
-            decoration: InputDecoration(
-              errorText: errorText.isNotEmpty ? errorText : null,
-            ),
-            style: TextStyle(
-              color: disabledTextColor(context, enabled),
-            ),
-          ).workaroundFreezeLinuxMint(),
-        ],
-      ),
-    ],
-  ).marginOnly(bottom: 8);
 }
 
 class _CountDownButton extends StatefulWidget {

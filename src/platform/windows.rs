@@ -5181,12 +5181,13 @@ pub fn try_remove_temp_update_files() {
     };
 
     let one_hour = std::time::Duration::from_secs(60 * 60);
+    let official_prefix = format!("{}-", crate::common::OFFICIAL_RELEASE_ASSET_PREFIX);
     for entry in entries {
         if let Ok(entry) = entry {
             let path = entry.path();
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                // Match files like rustdesk-*.msi or rustdesk-*.exe
-                if file_name.starts_with("rustdesk-")
+                // Match current HDesk update packages and clean legacy rustdesk-* leftovers too.
+                if (file_name.starts_with(&official_prefix) || file_name.starts_with("rustdesk-"))
                     && (file_name.ends_with(".msi") || file_name.ends_with(".exe"))
                 {
                     // Skip files modified within the last hour to avoid deleting files being downloaded

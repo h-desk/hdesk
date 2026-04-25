@@ -24,6 +24,77 @@ static CONTROLLING_SESSION_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 const DUR_ONE_DAY: Duration = Duration::from_secs(60 * 60 * 24);
 
+fn parse_total_size_from_headers(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|content_range| content_range.to_str().ok())
+        .and_then(|content_range| content_range.rsplit('/').next())
+        .and_then(|total_size| total_size.trim().parse::<u64>().ok())
+        .or_else(|| {
+            headers
+                .get(reqwest::header::CONTENT_LENGTH)
+                .and_then(|content_length| content_length.to_str().ok())
+                .and_then(|content_length| content_length.parse::<u64>().ok())
+        })
+}
+
+fn get_remote_file_size(client: &reqwest::blocking::Client, download_url: &str) -> ResultType<u64> {
+    match client.head(download_url).send() {
+        Ok(response) if response.status().is_success() => {
+            if let Some(total_size) = parse_total_size_from_headers(response.headers()) {
+                return Ok(total_size);
+            }
+            log::warn!(
+                "HEAD {} succeeded but did not expose a usable file size, falling back to ranged GET",
+                download_url
+            );
+        }
+        Ok(response) => {
+            log::warn!(
+                "HEAD {} returned {}, falling back to ranged GET for file size",
+                download_url,
+                response.status()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "HEAD {} failed while probing file size: {}, falling back to ranged GET",
+                download_url,
+                err
+            );
+        }
+    }
+
+    let response = client
+        .get(download_url)
+        .header(reqwest::header::RANGE, "bytes=0-0")
+        .send()?;
+    if !response.status().is_success() {
+        bail!("Failed to get the file size: {}", response.status());
+    }
+    let Some(total_size) = parse_total_size_from_headers(response.headers()) else {
+        bail!("Failed to get content length");
+    };
+    Ok(total_size)
+}
+
+#[cfg(target_os = "windows")]
+fn prefer_msi_installer() -> bool {
+    if crate::common::is_custom_client() {
+        return false;
+    }
+    match crate::platform::is_msi_installed() {
+        Ok(installed) => installed,
+        Err(e) => {
+            log::warn!(
+                "Failed to detect MSI install mode, fallback to exe updater: {}",
+                e
+            );
+            false
+        }
+    }
+}
+
 pub fn update_controlling_session_count(count: usize) {
     CONTROLLING_SESSION_COUNT.store(count, Ordering::SeqCst);
 }
@@ -119,11 +190,11 @@ fn start_auto_update_check_(rx_msg: Receiver<UpdateMsg>) {
 
 fn check_update(manually: bool) -> ResultType<()> {
     #[cfg(target_os = "windows")]
-    let update_msi = crate::platform::is_msi_installed()? && !crate::is_custom_client();
+    let update_msi = prefer_msi_installer();
     if !(manually || config::Config::get_bool_option(config::keys::OPTION_ALLOW_AUTO_UPDATE)) {
         return Ok(());
     }
-    if do_check_software_update().is_err() {
+    if do_check_software_update(manually).is_err() {
         // ignore
         return Ok(());
     }
@@ -132,19 +203,7 @@ fn check_update(manually: bool) -> ResultType<()> {
     if update_url.is_empty() {
         log::debug!("No update available.");
     } else {
-        let download_url = update_url.replace("tag", "download");
-        let version = download_url.split('/').last().unwrap_or_default();
-        #[cfg(target_os = "windows")]
-        let download_url = if cfg!(feature = "flutter") {
-            format!(
-                "{}/hdesk-{}-x86_64.{}",
-                download_url,
-                version,
-                if update_msi { "msi" } else { "exe" }
-            )
-        } else {
-            format!("{}/hdesk-{}-x86-sciter.exe", download_url, version)
-        };
+        let (version, download_url) = resolve_download_url(&update_url)?;
         log::debug!("New version available: {}", &version);
         let client = create_http_client_with_url(&download_url);
         let Some(file_path) = get_download_file_from_url(&download_url) else {
@@ -155,18 +214,7 @@ fn check_update(manually: bool) -> ResultType<()> {
             // Check if the file size is the same as the server file size
             // If the file size is the same, we don't need to download it again.
             let file_size = std::fs::metadata(&file_path)?.len();
-            let response = client.head(&download_url).send()?;
-            if !response.status().is_success() {
-                bail!("Failed to get the file size: {}", response.status());
-            }
-            let total_size = response
-                .headers()
-                .get(reqwest::header::CONTENT_LENGTH)
-                .and_then(|ct_len| ct_len.to_str().ok())
-                .and_then(|ct_len| ct_len.parse::<u64>().ok());
-            let Some(total_size) = total_size else {
-                bail!("Failed to get content length");
-            };
+            let total_size = get_remote_file_size(&client, &download_url)?;
             if file_size == total_size {
                 is_file_exists = true;
             } else {
@@ -194,6 +242,81 @@ fn check_update(manually: bool) -> ResultType<()> {
         }
     }
     Ok(())
+}
+
+fn resolve_download_url(update_url: &str) -> ResultType<(String, String)> {
+    let Some(version) = get_version_from_update_url(update_url) else {
+        bail!("Unsupported update url: {}", update_url);
+    };
+
+    if is_release_page_url(update_url) {
+        let download_root = get_release_download_root(update_url)?;
+        let download_file = get_release_asset_filename(&version)?;
+        Ok((version, format!("{download_root}/{download_file}")))
+    } else {
+        Ok((version, update_url.to_owned()))
+    }
+}
+
+fn is_release_page_url(update_url: &str) -> bool {
+    update_url.contains("/releases/tag/")
+}
+
+fn get_version_from_update_url(update_url: &str) -> Option<String> {
+    let prefix = format!("{}-", crate::common::OFFICIAL_RELEASE_ASSET_PREFIX);
+    if let Some(start) = update_url.find(&prefix) {
+        let rest = &update_url[start + prefix.len()..];
+        for end_marker in ["-x86_64.", "-x86-sciter.", "-aarch64."] {
+            if let Some(end) = rest.find(end_marker) {
+                return Some(rest[..end].to_owned());
+            }
+        }
+    }
+
+    update_url
+        .split('?')
+        .next()
+        .and_then(|url_without_query| url_without_query.rsplit('/').next())
+        .filter(|segment| !segment.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn get_release_download_root(release_page_url: &str) -> ResultType<String> {
+    let download_root = release_page_url.replacen("/releases/tag/", "/releases/download/", 1);
+    if download_root == release_page_url {
+        bail!("Unsupported release page url: {}", release_page_url);
+    }
+    Ok(download_root)
+}
+
+pub fn get_release_asset_filename(version: &str) -> ResultType<String> {
+    let prefix = crate::common::OFFICIAL_RELEASE_ASSET_PREFIX;
+
+    #[cfg(target_os = "windows")]
+    {
+        if cfg!(feature = "flutter") {
+            let extension = if prefer_msi_installer() { "msi" } else { "exe" };
+            return Ok(format!("{prefix}-{version}-x86_64.{extension}"));
+        }
+
+        return Ok(format!("{prefix}-{version}-x86-sciter.exe"));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        return if cfg!(target_arch = "x86_64") {
+            Ok(format!("{prefix}-{version}-x86_64.dmg"))
+        } else if cfg!(target_arch = "aarch64") {
+            Ok(format!("{prefix}-{version}-aarch64.dmg"))
+        } else {
+            bail!("unsupported")
+        };
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        bail!("unsupported")
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -285,6 +408,24 @@ fn update_new_version(update_msi: bool, version: &str, file_path: &PathBuf) {
 }
 
 pub fn get_download_file_from_url(url: &str) -> Option<PathBuf> {
-    let filename = url.split('/').last()?;
+    let mut filename = if let Ok(parsed) = url::Url::parse(url) {
+        parsed.path_segments()?.next_back()?.to_owned()
+    } else {
+        url.split('/').next_back()?.to_owned()
+    };
+
+    if let Some(decoded_tail) = filename.rsplit("%2F").next() {
+        filename = decoded_tail.to_owned();
+    }
+    if let Some(decoded_tail) = filename.rsplit("%2f").next() {
+        filename = decoded_tail.to_owned();
+    }
+    if let Some(clean_filename) = filename.split('?').next() {
+        filename = clean_filename.to_owned();
+    }
+    if filename.is_empty() {
+        return None;
+    }
+
     Some(std::env::temp_dir().join(filename))
 }
