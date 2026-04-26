@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:bot_toast/bot_toast.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -111,12 +112,39 @@ Future<void> _applyHdeskManagedDesktopDefaults(String appType) async {
       kOptionVerificationMethod, _kHdeskDefaultVerificationMethod);
 }
 
+void _installDesktopCrashHooks() {
+  final previousFlutterError = FlutterError.onError;
+  FlutterError.onError = (FlutterErrorDetails details) {
+    DesktopCrashTrace.log(
+      'FlutterError exception=${details.exceptionAsString()} library=${details.library ?? ''} context=${details.context?.toDescription() ?? ''}\nstack=${details.stack ?? StackTrace.current}'
+    );
+    if (previousFlutterError != null) {
+      previousFlutterError(details);
+    } else {
+      FlutterError.presentError(details);
+    }
+  };
+
+  final previousPlatformError = ui.PlatformDispatcher.instance.onError;
+  ui.PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    DesktopCrashTrace.log('PlatformDispatcher.onError error=$error\nstack=$stack');
+    if (previousPlatformError != null) {
+      return previousPlatformError(error, stack);
+    }
+    return false;
+  };
+}
+
 Future<void> main(List<String> args) async {
   earlyAssert();
   WidgetsFlutterBinding.ensureInitialized();
 
   debugPrint("launch args: $args");
   kBootArgs = List.from(args);
+
+  if (isDesktop) {
+    _installDesktopCrashHooks();
+  }
 
   if (!isDesktop) {
     runMobileApp();
