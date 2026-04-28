@@ -315,6 +315,13 @@ fn should_reuse_sticky_for_blocked_surface(
     if point_near_rect(prev.editor, x, y, 96) {
         return true;
     }
+    if prev.content_kind == 3
+        && rect_has_area(prev.pane)
+        && prev.pane != prev.window
+        && point_near_rect(prev.pane, x, y, 24)
+    {
+        return true;
+    }
     rect_has_area(prev.pane)
         && prev.pane != prev.window
         && looks_like_bottom_input_band(prev.editor, prev.window)
