@@ -53,6 +53,14 @@ HICON LoadCustomIcon() {
   return g_custom_icon_;
 }
 
+HICON GetWindowIcon(HINSTANCE instance) {
+  HICON custom_icon = LoadCustomIcon();
+  if (custom_icon != nullptr) {
+    return custom_icon;
+  }
+  return LoadIcon(instance, MAKEINTRESOURCE(IDI_APP_ICON));
+}
+
 using EnableNonClientDpiScaling = BOOL __stdcall(HWND hwnd);
 
 // Scale helper to convert logical scaler values to physical using passed in
@@ -119,15 +127,8 @@ const wchar_t* WindowClassRegistrar::GetWindowClass() {
     window_class.cbClsExtra = 0;
     window_class.cbWndExtra = 0;
     window_class.hInstance = GetModuleHandle(nullptr);
-    
-    // Try to load icon from data\flutter_assets\assets\icon.ico if it exists
-    HICON custom_icon = LoadCustomIcon();
-    if (custom_icon != nullptr) {
-      window_class.hIcon = custom_icon;
-    } else {
-      window_class.hIcon =
-          LoadIcon(window_class.hInstance, MAKEINTRESOURCE(IDI_APP_ICON));
-    }
+
+    window_class.hIcon = GetWindowIcon(window_class.hInstance);
     
     window_class.hbrBackground = 0;
     window_class.lpszMenuName = nullptr;
@@ -180,6 +181,14 @@ bool Win32Window::CreateAndShow(const std::wstring& title,
 
   if (!window) {
     return false;
+  }
+
+  HICON window_icon = GetWindowIcon(GetModuleHandle(nullptr));
+  if (window_icon != nullptr) {
+    SendMessage(window, WM_SETICON, ICON_BIG,
+                reinterpret_cast<LPARAM>(window_icon));
+    SendMessage(window, WM_SETICON, ICON_SMALL,
+                reinterpret_cast<LPARAM>(window_icon));
   }
 
   if (!showOnTaskBar) {

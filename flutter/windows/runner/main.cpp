@@ -22,6 +22,24 @@ const wchar_t* getWindowClassName();
 
 namespace {
 
+constexpr const wchar_t kHDeskAppUserModelId[] = L"YunjiChuangzhi.HDesk";
+
+void SetExplicitAppUserModelIdIfAvailable() {
+  HMODULE shell32 = LoadLibraryW(L"shell32.dll");
+  if (shell32 == nullptr) {
+    return;
+  }
+
+  using SetAppIdFn = HRESULT(WINAPI*)(PCWSTR);
+  auto set_app_id = reinterpret_cast<SetAppIdFn>(
+      GetProcAddress(shell32, "SetCurrentProcessExplicitAppUserModelID"));
+  if (set_app_id != nullptr) {
+    set_app_id(kHDeskAppUserModelId);
+  }
+
+  FreeLibrary(shell32);
+}
+
 std::wstring GetSiblingLibraryPath(const wchar_t* library_name) {
   wchar_t module_path[MAX_PATH] = {0};
   DWORD path_length = ::GetModuleFileNameW(nullptr, module_path, MAX_PATH);
@@ -72,6 +90,8 @@ bool WarnIfLikelyMissingHwcodec(const std::wstring& dll_path) {
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command)
 {
+  SetExplicitAppUserModelIdIfAvailable();
+
   std::wstring rustdesk_dll_path = GetSiblingLibraryPath(L"librustdesk.dll");
   if (WarnIfLikelyMissingHwcodec(rustdesk_dll_path)) {
     return EXIT_FAILURE;
