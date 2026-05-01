@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' hide Size;
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -444,21 +445,24 @@ showCmWindow({bool isStartup = false}) async {
     bind.mainHideDock();
     await Future.wait([
       windowManager.show(),
-      windowManager.focus(),
       windowManager.setOpacity(1)
     ]);
+    // Set WS_EX_NOACTIVATE so the CM window never steals focus
+    if (Platform.isWindows) {
+      _setCmWindowNoActivate();
+    }
     // ensure initial window size to be changed
     await windowManager.setSizeAlignment(
-        kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
+        kConnectionManagerWindowSizeClosedChat, Alignment.bottomRight);
     _isCmReadyToShow = true;
   } else if (_isCmReadyToShow) {
     if (await windowManager.getOpacity() != 1) {
       await windowManager.setOpacity(1);
-      await windowManager.focus();
       await windowManager.minimize(); //needed
       await windowManager.setSizeAlignment(
-          kConnectionManagerWindowSizeClosedChat, Alignment.topRight);
-      windowOnTop(null);
+          kConnectionManagerWindowSizeClosedChat, Alignment.bottomRight);
+      // Don't call windowOnTop — avoid stealing focus from user's active window
+      await windowManager.show();
     }
   }
 }
@@ -480,6 +484,32 @@ hideCmWindow({bool isStartup = false}) async {
       await windowManager.minimize();
       await windowManager.hide();
     }
+  }
+}
+
+/// Set WS_EX_NOACTIVATE on the CM window so it never steals focus.
+void _setCmWindowNoActivate() {
+  if (!Platform.isWindows) return;
+  try {
+    final user32 = DynamicLibrary.open('user32.dll');
+    final getActiveWindow = user32.lookupFunction<IntPtr Function(), int Function()>('GetActiveWindow');
+    final getWindowLongPtr = user32.lookupFunction<
+        IntPtr Function(IntPtr hWnd, Int32 nIndex),
+        int Function(int hWnd, int nIndex)>('GetWindowLongPtrW');
+    final setWindowLongPtr = user32.lookupFunction<
+        IntPtr Function(IntPtr hWnd, Int32 nIndex, IntPtr dwNewLong),
+        int Function(int hWnd, int nIndex, int dwNewLong)>('SetWindowLongPtrW');
+
+    const int GWL_EXSTYLE = -20;
+    const int WS_EX_NOACTIVATE = 0x08000000;
+
+    final hWnd = getActiveWindow();
+    if (hWnd != 0) {
+      final exStyle = getWindowLongPtr(hWnd, GWL_EXSTYLE);
+      setWindowLongPtr(hWnd, GWL_EXSTYLE, exStyle | WS_EX_NOACTIVATE);
+    }
+  } catch (e) {
+    debugPrint('Failed to set WS_EX_NOACTIVATE: $e');
   }
 }
 

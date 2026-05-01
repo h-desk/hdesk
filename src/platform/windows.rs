@@ -274,7 +274,19 @@ fn looks_like_bottom_input_band(
 
 fn cursor_surface_explicitly_noneditable(class_name: &str) -> bool {
     let class_name = class_name.to_lowercase();
-    class_name.contains("no-user-select")
+    // "no-user-select" means the surface blocks browser-native text selection.
+    // However, VS Code's Monaco editor applies this class to the code editing
+    // surface which DOES accept keyboard input via a hidden textarea.
+    // When "monaco-editor" (or similar focused-editor indicator) co-exists,
+    // this is NOT a non-editable surface — it's a code editor.
+    if class_name.contains("no-user-select") {
+        // Monaco editor: has keyboard input despite no-user-select
+        if class_name.contains("monaco-editor") || class_name.contains("monaco-mouse-cursor-text") {
+            return false;
+        }
+        return true;
+    }
+    false
 }
 
 fn virtual_proxy_still_matches_previous_hint(
@@ -879,7 +891,7 @@ unsafe fn classify_by_class(hwnd: HWND) -> Option<(bool, i32)> {
 }
 
 /// Attempt to detect editability via UI Automation (COM, apartment-per-call).
-/// Returns (editable, content_kind, editor_rect_option, pane_rect_option).
+/// Returns (editable, content_kind, editor_rect_option, pane_rect_option, efp_class).
 unsafe fn probe_via_uia(
     hwnd: HWND,
 ) -> (
@@ -887,6 +899,7 @@ unsafe fn probe_via_uia(
     i32,
     Option<(i32, i32, i32, i32)>,
     Option<(i32, i32, i32, i32)>,
+    String,
 ) {
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTreeWalker,
@@ -924,8 +937,10 @@ unsafe fn probe_via_uia(
     let com_ok = hr_init.is_ok() || hr_init.0 == 0x00000001_u32 as i32; // S_FALSE = already init
 
     if !com_ok {
-        return (false, 0, None, None);
+        return (false, 0, None, None, String::new());
     }
+
+    let mut efp_class_out = String::new();
 
     let result = (|| -> windows::core::Result<(
         bool,
@@ -1271,6 +1286,9 @@ unsafe fn probe_via_uia(
         // the user just interacted with in Electron/Chromium apps where UIA
         // focus is notoriously unreliable.
         log::debug!("editable_focus probe: cursor={:?} host_hwnd={:?}", cursor_pos, hwnd);
+        // Saved from ElementFromPoint for use in final fallback (focused-code-editor detection)
+        let mut efp_raw_rect: Option<(i32, i32, i32, i32)> = None;
+        let mut efp_class: String = String::new();
         if let Some((cursor_x, cursor_y)) = cursor_pos {
             let pt = windows::Win32::Foundation::POINT { x: cursor_x, y: cursor_y };
             // Use ElementFromPoint as a hint. IMPORTANT: errors here must NOT propagate via ?
@@ -1329,6 +1347,9 @@ unsafe fn probe_via_uia(
                     "editable_focus ElementFromPoint at ({},{}) → editable={} class={} role={} raw_rect={:?} result_rect={:?}",
                     cursor_x, cursor_y, cursor_candidate.0, raw_class, raw_role.0, raw_rect, cursor_candidate.2
                 );
+                efp_raw_rect = raw_rect;
+                efp_class = raw_class.clone();
+                efp_class_out = raw_class.clone();
                 if !cursor_candidate.0 && cursor_surface_explicitly_noneditable(&raw_class) {
                     cursor_surface_blocks_virtual_override = true;
                     log::debug!(
@@ -1543,6 +1564,42 @@ unsafe fn probe_via_uia(
                 }
             }
         }
+
+        // Focused code editor fallback: all detection paths failed to find an
+        // editable element, but we have a content_pane_candidate from a Chromium
+        // code editor host (e.g. VS Code). The editor uses a hidden textarea that
+        // UIA cannot reach. Synthesize an editable result using the element's raw
+        // rect as pane so auto_vp zooms to the actual panel width.
+        // GUARD: Only trigger when ElementFromPoint surface is a monaco-editor.
+        // Without this check, clicking non-editable text (chat messages, terminal)
+        // would also trigger this fallback since those surfaces don't block it.
+        let efp_is_monaco = efp_class.to_lowercase().contains("monaco-editor");
+        if !final_result.0 && !cursor_surface_blocks_virtual_override && is_chromium_host && efp_is_monaco {
+            if let (Some(raw_rect), Some((cx, cy))) = (efp_raw_rect, cursor_pos) {
+                if rect_has_area(raw_rect) && point_near_rect(raw_rect, cx, cy, 24) {
+                    let synth_w = 200i32;
+                    let synth_h = 25i32;
+                    let synth_editor = (
+                        (cx - synth_w / 2).max(raw_rect.0),
+                        (cy - synth_h / 2).max(raw_rect.1),
+                        synth_w.min(raw_rect.2),
+                        synth_h,
+                    );
+                    let pane = content_pane_candidate.unwrap_or(raw_rect);
+                    log::info!(
+                        "editable_focus focused-code-editor fallback: cursor=({},{}) raw_rect={:?} synth_editor={:?} pane={:?} efp_class={}",
+                        cx, cy, raw_rect, synth_editor, pane, efp_class
+                    );
+                    return Ok((true, 2, Some(synth_editor), Some(pane)));
+                }
+            }
+        } else if !final_result.0 && is_chromium_host && !efp_is_monaco && (efp_raw_rect.is_some() || content_pane_candidate.is_some()) {
+            log::debug!(
+                "editable_focus focused-code-editor fallback SKIPPED: efp_class={} blocks={} efp_rect={:?} pane={:?}",
+                efp_class, cursor_surface_blocks_virtual_override, efp_raw_rect, content_pane_candidate
+            );
+        }
+
         Ok((
             final_result.0,
             final_result.1,
@@ -1561,7 +1618,8 @@ unsafe fn probe_via_uia(
     })();
 
     CoUninitialize();
-    result.unwrap_or((false, 0, None, None))
+    let (ed, kind, rect, pane) = result.unwrap_or((false, 0, None, None));
+    (ed, kind, rect, pane, efp_class_out)
 }
 
 unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<EditableFocusHintInfo> {
@@ -1637,6 +1695,7 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
     // Try Win32 class-based fast path
     let class_result = classify_by_class(focus_hwnd);
     let detect_source = if class_result.is_some() { "class" } else { "uia" };
+    let mut uia_efp_class = String::new();
     let (editable, content_kind, editor_rect, pane_override) =
         if let Some((editable, kind)) = class_result {
             (editable, kind, Some(hwnd_screen_rect(focus_hwnd)), None)
@@ -1645,7 +1704,12 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
             // Do NOT degrade editable=true with no actionable rect into the
             // focused HWND bounds: Chromium/VS Code can then become a false
             // whole-window editable hint that the proxy-reuse path keeps alive.
-            let (ed, kind, maybe_rect, maybe_pane) = probe_via_uia(focus_hwnd);
+            let (ed, kind, maybe_rect, maybe_pane, efp_cls) = probe_via_uia(focus_hwnd);
+            log::debug!(
+                "editable_focus uia result: editable={} kind={} rect={:?} pane={:?} efp_class={}",
+                ed, kind, maybe_rect, maybe_pane, efp_cls
+            );
+            uia_efp_class = efp_cls;
             (ed, kind, maybe_rect, maybe_pane)
         };
     let editor_rect_has_area = editor_rect.map(rect_has_area).unwrap_or(false);
@@ -1661,6 +1725,48 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
             content_kind,
             pane_override
         );
+        // VS Code / Monaco editor: UIA confirms the hidden textarea IS editable
+        // (kind=2) but it has no bounding rect (1px hidden element used for
+        // keyboard capture). If we have a code pane from UIA traversal and cursor
+        // is inside it, synthesize an editor rect from cursor position.
+        // GUARD: Only trigger when the UIA EFP surface class indicates a Monaco
+        // editor. Without this, clicking any non-editable surface in the same
+        // VS Code window (chat messages, terminal) would also trigger synthesis.
+        let fix_b_efp_is_monaco = uia_efp_class.to_lowercase().contains("monaco-editor");
+        if fix_b_efp_is_monaco {
+            if let Some(pane) = pane_override {
+                let mut cursor_pt: winapi::shared::windef::POINT = mem::zeroed();
+                if winapi::um::winuser::GetCursorPos(&mut cursor_pt) != 0 {
+                    let cx = cursor_pt.x;
+                    let cy = cursor_pt.y;
+                    if point_in_rect(pane, cx, cy) {
+                        let synth_editor = synth_editor_rect_from_cursor(pane, (cx, cy))
+                            .unwrap_or((cx - 100, cy - 12, 200, 25));
+                        let display_idx = display_idx_for_point(displays, cx, cy);
+                        log::info!(
+                            "editable_focus chromium-editable-no-rect synth: cursor=({},{}) pane={:?} editor={:?} kind={} efp_class={}",
+                            cx, cy, pane, synth_editor, content_kind, uia_efp_class
+                        );
+                        let hint = normalize_editable_focus_hint_to_display(displays, EditableFocusHintInfo {
+                            editable: true,
+                            editor: synth_editor,
+                            pane,
+                            window,
+                            display_idx,
+                            content_kind,
+                            foreground_hwnd: fg_hwnd_isize,
+                            ..Default::default()
+                        });
+                        return Some(finalize_editable_focus_hint(fg_hwnd, hint));
+                    }
+                }
+            }
+        } else {
+            log::debug!(
+                "editable_focus chromium-editable-no-rect SKIPPED: efp_class={} pane={:?} kind={}",
+                uia_efp_class, pane_override, content_kind
+            );
+        }
     }
 
     if !actionable_editable {

@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/widgets/audio_input.dart';
 import 'package:flutter_hbb/consts.dart';
+import 'package:flutter_hbb/desktop/widgets/connection_toast_panel.dart';
 import 'package:flutter_hbb/desktop/widgets/tabbar_widget.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/cm_file_model.dart';
@@ -197,7 +198,9 @@ class ConnectionManagerState extends State<ConnectionManager>
               ),
             ],
           )
-        : Listener(
+        : _shouldShowMinimalToast(serverModel)
+            ? _buildMinimalToastLayout(serverModel)
+            : Listener(
             onPointerDown: pointerHandler,
             onPointerMove: pointerHandler,
             child: DesktopTab(
@@ -359,28 +362,64 @@ class ConnectionManagerState extends State<ConnectionManager>
   }
 }
 
+  /// Check if all active clients are authorized remote connections
+  /// (no file transfer, no pending auth, no disconnected).
+  bool _shouldShowMinimalToast(ServerModel serverModel) {
+    return serverModel.clients.every((c) =>
+        c.authorized && !c.disconnected && c.type_() == ClientType.remote);
+  }
+
+  /// Minimal layout: no tab bar, no LayoutBuilder, just the toast panel.
+  Widget _buildMinimalToastLayout(ServerModel serverModel) {
+    final client = serverModel.clients.isNotEmpty
+        ? serverModel.clients.first
+        : null;
+    if (client == null) return const SizedBox.shrink();
+    return Container(
+      color: Colors.transparent,
+      child: Center(
+        child: ConnectionToastPanel(
+          key: ValueKey(client.id),
+          client: client,
+        ),
+      ),
+    );
+  }
+
 Widget buildConnectionCard(Client client) {
   return Consumer<ServerModel>(
-    builder: (context, value, child) => Column(
-      mainAxisAlignment: MainAxisAlignment.start,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      key: ValueKey(client.id),
-      children: [
-        _CmHeader(client: client),
-        client.type_() == ClientType.file ||
-                client.type_() == ClientType.portForward ||
-                client.type_() == ClientType.terminal ||
-                client.disconnected
-            ? Offstage()
-            : _PrivilegeBoard(client: client),
-        Expanded(
-          child: Align(
-            alignment: Alignment.bottomCenter,
-            child: _CmControlPanel(client: client),
-          ),
-        )
-      ],
-    ).paddingSymmetric(vertical: 4.0, horizontal: 8.0),
+    builder: (context, value, child) {
+      // For authorized + connected clients, show minimal toast panel
+      if (client.authorized && !client.disconnected &&
+          client.type_() == ClientType.remote) {
+        return ConnectionToastPanel(
+          key: ValueKey(client.id),
+          client: client,
+        );
+      }
+      // For other states (unauthorized, disconnected, file transfer etc),
+      // keep the original full card
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        key: ValueKey(client.id),
+        children: [
+          _CmHeader(client: client),
+          client.type_() == ClientType.file ||
+                  client.type_() == ClientType.portForward ||
+                  client.type_() == ClientType.terminal ||
+                  client.disconnected
+              ? Offstage()
+              : _PrivilegeBoard(client: client),
+          Expanded(
+            child: Align(
+              alignment: Alignment.bottomCenter,
+              child: _CmControlPanel(client: client),
+            ),
+          )
+        ],
+      ).paddingSymmetric(vertical: 4.0, horizontal: 8.0);
+    },
   );
 }
 
