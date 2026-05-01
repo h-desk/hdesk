@@ -19,6 +19,7 @@ import 'package:flutter_hbb/desktop/screen/desktop_remote_screen.dart';
 import 'package:flutter_hbb/desktop/screen/desktop_terminal_screen.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/utils/desktop_connection_notifier.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:get/get.dart';
@@ -247,6 +248,7 @@ void runMainApp(bool startService) async {
   // register uni links
   DesktopCrashTrace.log('runMainApp start startService=$startService');
   await initEnv(kAppTypeMain);
+  await initDesktopConnectionNotifier();
   checkUpdate();
   // trigger connection status updater
   await bind.mainCheckConnectStatus();
@@ -419,6 +421,15 @@ void runConnectionManagerScreen() async {
     MyTheme.currentThemeMode(),
   );
   DesktopCrashTrace.log('runConnectionManagerScreen app mounted');
+  if (!_useDesktopConnectionManagerWindowUi()) {
+    await hideCmWindow(isStartup: true);
+    DesktopCrashTrace.log(
+        'runConnectionManagerScreen hidden by desktop main-window status design');
+    setResizable(false);
+    listenUniLinks(handleByFlutter: false);
+    DesktopCrashTrace.log('runConnectionManagerScreen ready without UI');
+    return;
+  }
   final hide = await bind.cmGetConfig(name: "hide_cm") == 'true';
   gFFI.serverModel.hideCm = hide;
   DesktopCrashTrace.log('runConnectionManagerScreen hide_cm=$hide');
@@ -437,7 +448,15 @@ void runConnectionManagerScreen() async {
 
 bool _isCmReadyToShow = false;
 
+bool _useDesktopConnectionManagerWindowUi() {
+  return bind.mainGetBuildinOption(key: 'show-cm-window-ui') == 'Y';
+}
+
 showCmWindow({bool isStartup = false}) async {
+  if (!_useDesktopConnectionManagerWindowUi()) {
+    await hideCmWindow(isStartup: isStartup);
+    return;
+  }
   if (isStartup) {
     WindowOptions windowOptions = getHiddenTitleBarWindowOptions(
         size: kConnectionManagerWindowSizeClosedChat, alwaysOnTop: true);

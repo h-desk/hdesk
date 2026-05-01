@@ -2126,7 +2126,7 @@ pub fn cm_login_res(conn_id: i32, res: bool) {
 
 pub fn cm_close_connection(conn_id: i32) {
     #[cfg(not(any(target_os = "ios")))]
-    crate::ui_cm_interface::close(conn_id);
+    send_to_cm(&crate::ipc::Data::CmCloseConn(conn_id));
 }
 
 pub fn cm_remove_disconnected_connection(conn_id: i32) {

@@ -84,6 +84,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         ),
       buildTip(context),
       if (!isOutgoingOnly) buildIDBoard(context),
+      if (!isOutgoingOnly) buildControlledStatusCard(context),
       if (!isOutgoingOnly) buildPasswordBoard(context),
       FutureBuilder<Widget>(
         future: Future.value(
@@ -323,6 +324,248 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             return buildPasswordBoard2(context, model);
           },
         ));
+  }
+
+  Widget buildControlledStatusCard(BuildContext context) {
+    final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    return Consumer<ServerModel>(
+      builder: (context, model, child) {
+        final activeSessions = model.desktopControlledSessions;
+        if (activeSessions.isEmpty) {
+          return const Offstage();
+        }
+
+        final client = activeSessions.first;
+        final hasMultipleControllers = activeSessions.length > 1;
+        final avatar = buildAvatarWidget(
+              avatar: client.avatar,
+              size: 36,
+              borderRadius: 10,
+              fallback: _buildControllerFallbackAvatar(client.name),
+            ) ??
+            _buildControllerFallbackAvatar(client.name);
+
+        Future<void> disconnect() async {
+          if (hasMultipleControllers) {
+            await model.closeAllDesktopControlledSessions();
+          } else {
+            await model.closeDesktopControlledSession(client.id);
+          }
+        }
+
+        return Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF2A1F24) : const Color(0xFFFFF4F4),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: const Color(0xFFE66A6A).withOpacity(isDark ? 0.45 : 0.25),
+              width: 1,
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.shield_outlined,
+                      size: 16,
+                      color: Color(0xFFE66A6A),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '被控制中',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: textColor?.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    ),
+                    if (hasMultipleControllers)
+                      Text(
+                        '+${activeSessions.length - 1}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFFE66A6A),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    avatar,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            client.name.isNotEmpty
+                                ? client.name
+                                : 'Remote controller',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: textColor,
+                            ),
+                          ),
+                          if (client.title.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            _buildControllerTitleBadge(client.title),
+                          ],
+                          if (hasMultipleControllers) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              '另有 ${activeSessions.length - 1} 个连接仍在控制',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: textColor?.withOpacity(0.55),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: TextButton(
+                    onPressed: disconnect,
+                    style: TextButton.styleFrom(
+                      alignment: Alignment.center,
+                      foregroundColor: Colors.white,
+                      backgroundColor: const Color(0xFFE66A6A),
+                      padding: const EdgeInsets.symmetric(vertical: 9),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    child: Text(
+                      hasMultipleControllers ? '全部断开' : translate('Disconnect'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        height: 1.0,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildControllerTitleBadge(String title) {
+    final palette = _controllerTitlePalette(title);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: palette.background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: palette.border, width: 1),
+      ),
+      child: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+          color: palette.foreground,
+          letterSpacing: 0.1,
+        ),
+      ),
+    );
+  }
+
+  _ControllerTitlePalette _controllerTitlePalette(String title) {
+    switch (title.trim()) {
+      case '传奇赞助商':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFFFF1DB),
+          border: Color(0xFFFFB74D),
+          foreground: Color(0xFFE67E22),
+        );
+      case '钻石赞助商':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFE6FBFF),
+          border: Color(0xFF7EDAE7),
+          foreground: Color(0xFF0396A6),
+        );
+      case '赞助商':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFF3E8FF),
+          border: Color(0xFFC6A4F5),
+          foreground: Color(0xFF7E57C2),
+        );
+      case '挚友':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFFFF7D9),
+          border: Color(0xFFF4D35E),
+          foreground: Color(0xFFA67C00),
+        );
+      case '铁粉':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFF1F4F8),
+          border: Color(0xFFD0D7DE),
+          foreground: Color(0xFF6B7280),
+        );
+      case '支持者':
+        return const _ControllerTitlePalette(
+          background: Color(0xFFFFF0E4),
+          border: Color(0xFFE0A56A),
+          foreground: Color(0xFFB56A2C),
+        );
+      default:
+        return const _ControllerTitlePalette(
+          background: Color(0xFFF3F4F6),
+          border: Color(0xFFD1D5DB),
+          foreground: Color(0xFF4B5563),
+        );
+    }
+  }
+
+  Widget _buildControllerFallbackAvatar(String name) {
+    final trimmed = name.trim();
+    final label = trimmed.isNotEmpty ? trimmed[0].toUpperCase() : '?';
+    return Container(
+      width: 36,
+      height: 36,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: str2color(name),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+          fontSize: 18,
+        ),
+      ),
+    );
   }
 
   buildPasswordBoard2(BuildContext context, ServerModel model) {
@@ -979,6 +1222,18 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       ),
     );
   }
+}
+
+class _ControllerTitlePalette {
+  const _ControllerTitlePalette({
+    required this.background,
+    required this.border,
+    required this.foreground,
+  });
+
+  final Color background;
+  final Color border;
+  final Color foreground;
 }
 
 void setPasswordDialog({VoidCallback? notEmptyCallback}) async {

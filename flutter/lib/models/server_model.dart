@@ -15,14 +15,119 @@ import '../common/formatter/id_formatter.dart';
 import '../desktop/pages/server_page.dart' as desktop;
 import '../desktop/widgets/tabbar_widget.dart';
 import '../mobile/pages/server_page.dart';
+import '../utils/desktop_connection_notifier.dart';
 import '../utils/desktop_crash_trace.dart';
 import 'model.dart';
 
 const kLoginDialogTag = "LOGIN";
+const kDesktopControlledSessionsOptionKey =
+    'hdesk-desktop-controlled-sessions';
+const kDesktopControlledCloseRequestOptionKey =
+  'hdesk-desktop-controlled-close-request';
 
 const kUseTemporaryPassword = "use-temporary-password";
 const kUsePermanentPassword = "use-permanent-password";
 const kUseBothPasswords = "use-both-passwords";
+
+class DesktopControlledSession {
+  const DesktopControlledSession({
+    required this.id,
+    required this.name,
+    required this.peerId,
+    required this.avatar,
+    required this.title,
+  });
+
+  final int id;
+  final String name;
+  final String peerId;
+  final String avatar;
+  final String title;
+
+  factory DesktopControlledSession.fromClient(Client client) {
+    final profile = _parseDesktopControllerProfile(client.avatar);
+    return DesktopControlledSession(
+      id: client.id,
+      name: client.name,
+      peerId: client.peerId,
+      avatar: profile.avatar,
+      title: profile.title,
+    );
+  }
+
+  factory DesktopControlledSession.fromJson(Map<String, dynamic> json) {
+    final profile = _parseDesktopControllerProfile(
+      (json['avatar'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+    );
+    return DesktopControlledSession(
+      id: _parseId(json['id']),
+      name: (json['name'] ?? '').toString(),
+      peerId: (json['peer_id'] ?? json['peerId'] ?? '').toString(),
+      avatar: profile.avatar,
+      title: profile.title,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'name': name,
+      'peer_id': peerId,
+      'avatar': avatar,
+      'title': title,
+    };
+  }
+
+  static int _parseId(dynamic raw) {
+    if (raw is int) {
+      return raw;
+    }
+    if (raw is num) {
+      return raw.toInt();
+    }
+    return int.tryParse(raw?.toString() ?? '') ?? 0;
+  }
+}
+
+class _DesktopControllerProfile {
+  const _DesktopControllerProfile({
+    required this.avatar,
+    required this.title,
+  });
+
+  final String avatar;
+  final String title;
+}
+
+_DesktopControllerProfile _parseDesktopControllerProfile(
+  String rawAvatar, {
+  String title = '',
+}) {
+  final cleanTitle = title.trim();
+  final cleanAvatar = rawAvatar.trim();
+  if (cleanAvatar.isEmpty || !cleanAvatar.startsWith('{')) {
+    return _DesktopControllerProfile(
+      avatar: cleanAvatar,
+      title: cleanTitle,
+    );
+  }
+  try {
+    final decoded = jsonDecode(cleanAvatar);
+    if (decoded is Map<String, dynamic>) {
+      return _DesktopControllerProfile(
+        avatar: (decoded['url'] ?? decoded['avatar'] ?? '').toString().trim(),
+        title: cleanTitle.isNotEmpty
+            ? cleanTitle
+            : (decoded['title'] ?? '').toString().trim(),
+      );
+    }
+  } catch (_) {}
+  return _DesktopControllerProfile(
+    avatar: cleanAvatar,
+    title: cleanTitle,
+  );
+}
 
 class ServerModel with ChangeNotifier {
   bool _isStart = false; // Android MainService status
@@ -39,6 +144,7 @@ class ServerModel with ChangeNotifier {
   bool _allowNumericOneTimePassword = false;
   String _approveMode = "";
   int _zeroClientLengthCounter = 0;
+  bool _requestedTemporaryPasswordRefresh = false;
 
   late String _emptyIdShow;
   late final IDTextEditingController _serverId;
@@ -48,6 +154,12 @@ class ServerModel with ChangeNotifier {
   final tabController = DesktopTabController(tabType: DesktopTabType.cm);
 
   final List<Client> _clients = [];
+  final List<DesktopControlledSession> _desktopControlledSessions = [];
+  final Set<int> _notifiedDesktopConnectionIds = <int>{};
+  String _lastDesktopControlledSessionsOptionValue = '';
+  String _lastPublishedDesktopControlledSessionsOptionValue = '';
+  String _lastDesktopControlledCloseRequestValue = '';
+  String _lastProcessedDesktopControlledCloseRequestToken = '';
 
   Timer? cmHiddenTimer;
 
@@ -127,6 +239,17 @@ class ServerModel with ChangeNotifier {
 
   List<Client> get clients => _clients;
 
+  List<DesktopControlledSession> get desktopControlledSessions {
+    final sessions = <int, DesktopControlledSession>{
+      for (final session in _desktopControlledSessions) session.id: session,
+    };
+    for (final client in _clients.where(_isDesktopRemoteControlClient)) {
+      sessions.putIfAbsent(
+          client.id, () => DesktopControlledSession.fromClient(client));
+    }
+    return sessions.values.toList(growable: false);
+  }
+
   final controller = ScrollController();
 
   WeakReference<FFI> parent;
@@ -173,9 +296,15 @@ class ServerModel with ChangeNotifier {
             }
           } else {
             _zeroClientLengthCounter = 0;
-            if (!hideCm) showCmWindow();
+            hideCmWindow();
           }
         }
+        await _consumeDesktopControlledCloseRequest();
+        _publishDesktopControlledSessionsSnapshot();
+      }
+
+      if (desktopType == DesktopType.main) {
+        await _syncDesktopControlledSessionsFromSharedOption();
       }
 
       updatePasswordModel();
@@ -254,14 +383,27 @@ class ServerModel with ChangeNotifier {
     }
     var stopped = await mainGetBoolOption(kOptionStopService);
     final oldPwdText = _serverPasswd.text;
-    if (stopped ||
+    final useOneTimePassword = !(stopped ||
         verificationMethod == kUsePermanentPassword ||
-        _approveMode == 'click') {
+        _approveMode == 'click');
+    if (!useOneTimePassword) {
       _serverPasswd.text = '-';
+      _requestedTemporaryPasswordRefresh = false;
     } else {
-      if (_serverPasswd.text != temporaryPassword &&
-          temporaryPassword.isNotEmpty) {
-        _serverPasswd.text = temporaryPassword;
+      if (temporaryPassword.isNotEmpty) {
+        _requestedTemporaryPasswordRefresh = false;
+        if (_serverPasswd.text != temporaryPassword) {
+          _serverPasswd.text = temporaryPassword;
+        }
+      } else {
+        final generatingText = translate("Generating ...");
+        if (_serverPasswd.text != generatingText) {
+          _serverPasswd.text = generatingText;
+        }
+        if (!_requestedTemporaryPasswordRefresh) {
+          _requestedTemporaryPasswordRefresh = true;
+          bind.mainUpdateTemporaryPassword();
+        }
       }
     }
     if (oldPwdText != _serverPasswd.text) {
@@ -534,12 +676,10 @@ class ServerModel with ChangeNotifier {
             'ServerModel.updateClientState client decode failed error=$e payload=$clientJson');
       }
     }
+    _syncDesktopConnectionNotifications();
+    _publishDesktopControlledSessionsSnapshot();
     if (desktopType == DesktopType.cm) {
-      if (_clients.isEmpty) {
-        hideCmWindow();
-      } else if (!hideCm) {
-        showCmWindow();
-      }
+      hideCmWindow();
     }
     if (_clients.length != oldClientLenght) {
       final sample = _clients
@@ -563,8 +703,14 @@ class ServerModel with ChangeNotifier {
         final index = _clients.indexWhere((c) => c.id == client.id);
         if (index < 0) {
           _clients.add(client);
+          _maybeNotifyDesktopRemoteControl(client);
         } else {
           _clients[index].authorized = true;
+          _clients[index].name = client.name;
+          _clients[index].peerId = client.peerId;
+          _clients[index].avatar = client.avatar;
+          _clients[index].disconnected = client.disconnected;
+          _maybeNotifyDesktopRemoteControl(_clients[index]);
         }
       } else {
         if (_clients.any((c) => c.id == client.id)) {
@@ -580,9 +726,10 @@ class ServerModel with ChangeNotifier {
         _clients.removeAt(index_disconnected);
         tabController.remove(index_disconnected);
       }
-      if (desktopType == DesktopType.cm && !hideCm) {
-        showCmWindow();
+      if (desktopType == DesktopType.cm) {
+        hideCmWindow();
       }
+      _publishDesktopControlledSessionsSnapshot();
       scrollToBottom();
       notifyListeners();
       if (isAndroid && !client.authorized) showLoginDialog(client);
@@ -600,16 +747,6 @@ class ServerModel with ChangeNotifier {
         closable: false,
         onTap: () {},
         page: desktop.buildConnectionCard(client)));
-    Future.delayed(Duration.zero, () async {
-      if (!hideCm) windowOnTop(null);
-    });
-    // Only do the hidden task when on Desktop.
-    if (client.authorized && isDesktop) {
-      cmHiddenTimer = Timer(const Duration(seconds: 3), () {
-        if (!hideCm) windowManager.minimize();
-        cmHiddenTimer = null;
-      });
-    }
     parent.target?.chatModel
         .updateConnIdOfKey(MessageKey(client.peerId, client.id));
   }
@@ -707,6 +844,8 @@ class ServerModel with ChangeNotifier {
       }
       parent.target?.invokeMethod("cancel_notification", client.id);
       client.authorized = true;
+      _maybeNotifyDesktopRemoteControl(client);
+      _publishDesktopControlledSessionsSnapshot();
       notifyListeners();
     } else {
       bind.cmLoginRes(connId: client.id, res: res);
@@ -714,6 +853,7 @@ class ServerModel with ChangeNotifier {
       final index = _clients.indexOf(client);
       tabController.remove(index);
       _clients.remove(client);
+      _publishDesktopControlledSessionsSnapshot();
       if (isAndroid) androidUpdatekeepScreenOn();
     }
   }
@@ -722,6 +862,7 @@ class ServerModel with ChangeNotifier {
     try {
       final id = int.parse(evt['id'] as String);
       final close = (evt['close'] as String) == 'true';
+      _notifiedDesktopConnectionIds.remove(id);
       if (_clients.any((c) => c.id == id)) {
         final index = _clients.indexWhere((client) => client.id == id);
         if (index >= 0) {
@@ -738,6 +879,7 @@ class ServerModel with ChangeNotifier {
       if (desktopType == DesktopType.cm && _clients.isEmpty) {
         hideCmWindow();
       }
+      _publishDesktopControlledSessionsSnapshot();
       if (isAndroid) androidUpdatekeepScreenOn();
       notifyListeners();
     } catch (e) {
@@ -749,13 +891,205 @@ class ServerModel with ChangeNotifier {
     await Future.wait(
         _clients.map((client) => bind.cmCloseConnection(connId: client.id)));
     _clients.clear();
+    _desktopControlledSessions.clear();
+    _notifiedDesktopConnectionIds.clear();
+    _lastDesktopControlledSessionsOptionValue = '';
     tabController.state.value.tabs.clear();
+    _publishDesktopControlledSessionsSnapshot();
     if (isAndroid) androidUpdatekeepScreenOn();
+  }
+
+  Future<void> closeDesktopControlledSession(int connId) async {
+    await _requestDesktopControlledSessionsClose(<int>[connId]);
+  }
+
+  Future<void> closeAllDesktopControlledSessions() async {
+    final ids = desktopControlledSessions.map((session) => session.id).toSet();
+    if (ids.isEmpty) {
+      return;
+    }
+    await _requestDesktopControlledSessionsClose(ids.toList(growable: false));
   }
 
   void jumpTo(int id) {
     final index = _clients.indexWhere((client) => client.id == id);
     tabController.jumpTo(index);
+  }
+
+  bool _isDesktopRemoteControlClient(Client client) {
+    return client.authorized &&
+        !client.disconnected &&
+        client.type_() == ClientType.remote;
+  }
+
+  void _maybeNotifyDesktopRemoteControl(Client client) {
+    _maybeNotifyDesktopControlledSession(
+        DesktopControlledSession.fromClient(client));
+  }
+
+  void _maybeNotifyDesktopControlledSession(DesktopControlledSession session) {
+    if (!isDesktop || desktopType != DesktopType.main) {
+      return;
+    }
+    if (_notifiedDesktopConnectionIds.add(session.id)) {
+      showConnectionEstablishedNotification(
+        controllerName: session.name,
+        peerId: session.peerId,
+        controllerTitle: session.title,
+      );
+    }
+  }
+
+  void _syncDesktopConnectionNotifications() {
+    if (!isDesktop || desktopType != DesktopType.main) {
+      return;
+    }
+    final activeSessions = desktopControlledSessions;
+    final activeIds = activeSessions.map((session) => session.id).toSet();
+    _notifiedDesktopConnectionIds.removeWhere((id) => !activeIds.contains(id));
+    for (final session in activeSessions) {
+      _maybeNotifyDesktopControlledSession(session);
+    }
+  }
+
+  void _publishDesktopControlledSessionsSnapshot() {
+    if (!isDesktop || desktopType != DesktopType.cm) {
+      return;
+    }
+    final value = jsonEncode(
+      _clients
+          .where(_isDesktopRemoteControlClient)
+          .map((client) => DesktopControlledSession.fromClient(client).toJson())
+          .toList(),
+    );
+    final normalizedValue = value == '[]' ? '' : value;
+    if (_lastPublishedDesktopControlledSessionsOptionValue == normalizedValue) {
+      return;
+    }
+    _lastPublishedDesktopControlledSessionsOptionValue = normalizedValue;
+    DesktopCrashTrace.log(
+        'ServerModel.publishDesktopControlledSessions count=${desktopControlledSessions.length} valueLength=${normalizedValue.length}');
+    unawaited(_setDesktopControlledSessionsOption(normalizedValue));
+  }
+
+  Future<void> _syncDesktopControlledSessionsFromSharedOption() async {
+    if (!isDesktop || desktopType != DesktopType.main) {
+      return;
+    }
+    final raw = await bind.mainGetOption(key: kDesktopControlledSessionsOptionKey);
+    if (raw == _lastDesktopControlledSessionsOptionValue) {
+      return;
+    }
+    final nextSessions = <DesktopControlledSession>[];
+    if (raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final item in decoded) {
+            if (item is Map<String, dynamic>) {
+              nextSessions.add(DesktopControlledSession.fromJson(item));
+            } else if (item is Map) {
+              nextSessions.add(
+                DesktopControlledSession.fromJson(
+                    Map<String, dynamic>.from(item)),
+              );
+            }
+          }
+        }
+      } catch (e) {
+        DesktopCrashTrace.log(
+            'ServerModel.syncDesktopControlledSessions decode failed error=$e payload=$raw');
+        return;
+      }
+    }
+    _lastDesktopControlledSessionsOptionValue = raw;
+    _desktopControlledSessions
+      ..clear()
+      ..addAll(nextSessions.where((session) => session.id > 0));
+    DesktopCrashTrace.log(
+        'ServerModel.syncDesktopControlledSessions count=${_desktopControlledSessions.length} valueLength=${raw.length}');
+    _syncDesktopConnectionNotifications();
+    notifyListeners();
+  }
+
+  Future<void> _setDesktopControlledSessionsOption(String value) async {
+    try {
+      await bind.mainSetOption(
+          key: kDesktopControlledSessionsOptionKey, value: value);
+    } catch (e) {
+      DesktopCrashTrace.log(
+          'ServerModel.setDesktopControlledSessionsOption failed error=$e');
+    }
+  }
+
+  Future<void> _requestDesktopControlledSessionsClose(List<int> ids) async {
+    final distinctIds = ids.where((id) => id > 0).toSet().toList(growable: false);
+    if (distinctIds.isEmpty) {
+      return;
+    }
+    final payload = jsonEncode({
+      'token': DateTime.now().microsecondsSinceEpoch.toString(),
+      'ids': distinctIds,
+    });
+    DesktopCrashTrace.log(
+        'ServerModel.requestDesktopControlledSessionsClose ids=${distinctIds.join(',')}');
+    try {
+      await bind.mainSetOption(
+          key: kDesktopControlledCloseRequestOptionKey, value: payload);
+    } catch (e) {
+      DesktopCrashTrace.log(
+          'ServerModel.requestDesktopControlledSessionsClose failed error=$e');
+    }
+  }
+
+  Future<void> _consumeDesktopControlledCloseRequest() async {
+    if (!isDesktop || desktopType != DesktopType.cm) {
+      return;
+    }
+    final raw = await bind.mainGetOption(key: kDesktopControlledCloseRequestOptionKey);
+    if (raw.isEmpty || raw == _lastDesktopControlledCloseRequestValue) {
+      return;
+    }
+    _lastDesktopControlledCloseRequestValue = raw;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) {
+        return;
+      }
+      final payload = Map<String, dynamic>.from(decoded);
+      final token = (payload['token'] ?? '').toString();
+      if (token.isEmpty || token == _lastProcessedDesktopControlledCloseRequestToken) {
+        return;
+      }
+      final rawIds = payload['ids'];
+      if (rawIds is! List) {
+        return;
+      }
+      _lastProcessedDesktopControlledCloseRequestToken = token;
+      final activeIds = _clients.map((client) => client.id).toSet();
+      final closeIds = rawIds
+          .map((id) => DesktopControlledSession._parseId(id))
+          .where((id) => id > 0 && activeIds.contains(id))
+          .toList(growable: false);
+      if (closeIds.isEmpty) {
+        DesktopCrashTrace.log(
+            'ServerModel.consumeDesktopControlledCloseRequest no-active-target token=$token');
+      }
+      for (final connId in closeIds) {
+        DesktopCrashTrace.log(
+            'ServerModel.consumeDesktopControlledCloseRequest close connId=$connId token=$token');
+        bind.cmLoginRes(connId: connId, res: false);
+      }
+    } catch (e) {
+      DesktopCrashTrace.log(
+          'ServerModel.consumeDesktopControlledCloseRequest failed error=$e payload=$raw');
+    } finally {
+      try {
+        await bind.mainSetOption(
+            key: kDesktopControlledCloseRequestOptionKey, value: '');
+      } catch (_) {}
+      _lastDesktopControlledCloseRequestValue = '';
+    }
   }
 
   void setShowElevation(bool show) {

@@ -514,6 +514,12 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     self.running = true;
                                     break;
                                 }
+                                Data::CmCloseConn(id) => {
+                                    close(id);
+                                    self.close = false;
+                                    self.running = false;
+                                    break;
+                                }
                                 Data::Close => {
                                     log::info!("cm ipc connection closed from connection request");
                                     break;

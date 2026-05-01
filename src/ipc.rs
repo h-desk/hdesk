@@ -250,6 +250,7 @@ pub enum Data {
     ClickTime(i64),
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     MouseMoveTime(i64),
+    CmCloseConn(i32),
     Authorize,
     Close,
     #[cfg(windows)]

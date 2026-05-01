@@ -81,6 +81,7 @@ dependencies:
   path: ^1.8.1
   auto_size_text: ^3.0.0
   bot_toast: ^4.0.3
+  local_notifier: ^0.1.6
   win32: any
   password_strength: ^0.2.0
   flutter_launcher_icons: ^0.13.1

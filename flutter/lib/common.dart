@@ -4030,17 +4030,32 @@ Widget workaroundWindowBorder(BuildContext context, Widget child) {
 
 void updateTextAndPreserveSelection(
     TextEditingController controller, String text) {
-  // Only care about select all for now.
-  final isSelected = controller.selection.isValid &&
-      controller.selection.end > controller.selection.start;
+  if (controller.text == text) {
+    return;
+  }
 
-  // Set text will make the selection invalid.
+  final previousSelection = controller.selection;
   controller.text = text;
 
-  if (isSelected) {
-    controller.selection = TextSelection(
-        baseOffset: 0, extentOffset: controller.value.text.length);
+  if (!previousSelection.isValid) {
+    return;
   }
+
+  final maxOffset = controller.value.text.length;
+  final baseOffset = previousSelection.baseOffset < 0
+      ? 0
+      : (previousSelection.baseOffset > maxOffset
+          ? maxOffset
+          : previousSelection.baseOffset);
+  final extentOffset = previousSelection.extentOffset < 0
+      ? 0
+      : (previousSelection.extentOffset > maxOffset
+          ? maxOffset
+          : previousSelection.extentOffset);
+  controller.selection = TextSelection(
+    baseOffset: baseOffset,
+    extentOffset: extentOffset,
+  );
 }
 
 List<String> getPrinterNames() {

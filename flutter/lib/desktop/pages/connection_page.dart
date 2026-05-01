@@ -285,11 +285,6 @@ class _ConnectionPageState extends State<ConnectionPage>
       if (_allPeersLoader.needLoad) {
         _allPeersLoader.getAllPeers();
       }
-
-      final textLength = _idEditingController.value.text.length;
-      // Select all to facilitate removing text, just following the behavior of address input of chrome.
-      _idEditingController.selection =
-          TextSelection(baseOffset: 0, extentOffset: textLength);
     }
   }
 

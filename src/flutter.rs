@@ -1507,14 +1507,18 @@ pub mod connection_manager {
             {
                 log::debug!("call_main_service_set_by_name fail,{}", e);
             }
-            // send to UI, refresh widget
-            self.push_event("add_connection", &[("client", &client_json)]);
+            self.push_event_to_apps(
+                "add_connection",
+                &[("client", &client_json)],
+                &[super::APP_TYPE_CM, super::APP_TYPE_MAIN],
+            );
         }
 
         fn remove_connection(&self, id: i32, close: bool) {
-            self.push_event(
+            self.push_event_to_apps(
                 "on_client_remove",
                 &[("id", &id.to_string()), ("close", &close.to_string())],
+                &[super::APP_TYPE_CM, super::APP_TYPE_MAIN],
             );
         }
 
@@ -1534,7 +1538,11 @@ pub mod connection_manager {
         }
 
         fn show_elevation(&self, show: bool) {
-            self.push_event("show_elevation", &[("show", &show.to_string())]);
+            self.push_event_to_apps(
+                "show_elevation",
+                &[("show", &show.to_string())],
+                &[super::APP_TYPE_CM, super::APP_TYPE_MAIN],
+            );
         }
 
         fn update_voice_call_state(&self, client: &crate::ui_cm_interface::Client) {
@@ -1546,7 +1554,11 @@ pub mod connection_manager {
             {
                 log::debug!("call_main_service_set_by_name fail,{}", e);
             }
-            self.push_event("update_voice_call_state", &[("client", &client_json)]);
+            self.push_event_to_apps(
+                "update_voice_call_state",
+                &[("client", &client_json)],
+                &[super::APP_TYPE_CM, super::APP_TYPE_MAIN],
+            );
         }
 
         fn file_transfer_log(&self, action: &str, log: &str) {
@@ -1559,20 +1571,31 @@ pub mod connection_manager {
         where
             V: Sized + serde::Serialize + Clone,
         {
+            self.push_event_to_apps(name, event, &[super::APP_TYPE_CM]);
+        }
+
+        fn push_event_to_apps<V>(&self, name: &str, event: &[(&str, V)], apps: &[&str])
+        where
+            V: Sized + serde::Serialize + Clone,
+        {
             let mut h: HashMap<&str, serde_json::Value> =
                 event.iter().map(|(k, v)| (*k, json!(*v))).collect();
             debug_assert!(h.get("name").is_none());
             h.insert("name", json!(name));
+            let payload = serde_json::ser::to_string(&h).unwrap_or("".to_owned());
 
-            if let Some(s) = GLOBAL_EVENT_STREAM.read().unwrap().get(super::APP_TYPE_CM) {
-                s.add(serde_json::ser::to_string(&h).unwrap_or("".to_owned()));
-            } else {
-                println!(
-                    "Push event {} failed. No {} event stream found.",
-                    name,
-                    super::APP_TYPE_CM
-                );
-            };
+            let streams = GLOBAL_EVENT_STREAM.read().unwrap();
+            for app in apps {
+                if let Some(s) = streams.get(*app) {
+                    s.add(payload.clone());
+                } else {
+                    println!(
+                        "Push event {} failed. No {} event stream found.",
+                        name,
+                        app
+                    );
+                }
+            }
         }
     }
 
