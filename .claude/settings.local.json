@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(hvigorw*:*)",
+      "Bash(hvigorw.bat*:*)",
+      "Bash(hdc*:*)",
+      "Bash(cd /d/ohos/airead/Application*:*)",
+      "Bash(where*:*)",
+      "Bash(echo*:*)",
+      "Bash(pwd:*)",
+      "Bash(ls*:*)",
+      "Bash(cat*:*)",
+      "Skill(harmonyos-cloud-data)",
+      "Skill(harmonyos-cloud-data:*)"
+    ]
+  }
+}

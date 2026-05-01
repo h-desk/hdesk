@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Edit",
+      "Write",
+      "Read"
+    ],
+    "defaultMode": "bypassPermissions"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Code was modified. Remind Claude to run build and deploy: 1) hvigorw assembleHap 2) hdc install 3) hdc shell aa start",
+            "statusMessage": "Build reminder..."
+          }
+        ]
+      }
+    ]
+  }
+}
