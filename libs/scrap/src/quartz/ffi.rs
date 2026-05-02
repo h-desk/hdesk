@@ -199,6 +199,7 @@ extern "C" {
 
     pub fn IOSurfaceGetAllocSize(buffer: IOSurfaceRef) -> usize;
     pub fn IOSurfaceGetBaseAddress(buffer: IOSurfaceRef) -> *mut c_void;
+    pub fn IOSurfaceGetBytesPerRow(buffer: IOSurfaceRef) -> usize;
     pub fn IOSurfaceIncrementUseCount(buffer: IOSurfaceRef);
     pub fn IOSurfaceDecrementUseCount(buffer: IOSurfaceRef);
     pub fn IOSurfaceLock(buffer: IOSurfaceRef, options: u32, seed: *mut u32) -> i32;

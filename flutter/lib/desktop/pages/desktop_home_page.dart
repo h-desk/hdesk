@@ -171,7 +171,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final model = gFFI.serverModel;
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    
+
     // 格式化 ID：每 3 位分组，更易读
     String formatId(String id) {
       final cleaned = id.replaceAll(' ', '');
@@ -182,13 +182,13 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
       return buffer.toString();
     }
-    
+
     // 判断是否为有效 ID（纯数字且 ≥6 位）
     bool isValidId(String text) {
       final digits = text.replaceAll(' ', '');
       return digits.length >= 6 && RegExp(r'^\d+$').hasMatch(digits);
     }
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -230,15 +230,16 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 return GestureDetector(
                   onDoubleTap: ready
                       ? () {
-                          Clipboard.setData(ClipboardData(
-                              text: idText.replaceAll(' ', '')));
+                          Clipboard.setData(
+                              ClipboardData(text: idText.replaceAll(' ', '')));
                           showToast(translate("Copied"));
                         }
                       : null,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 300),
                     width: double.infinity,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
                       color: ready
                           ? MyTheme.accent.withOpacity(0.08)
@@ -329,6 +330,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   Widget buildControlledStatusCard(BuildContext context) {
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final requiresScreenRecordingPermission = isMacOS &&
+        !bind.isOutgoingOnly() &&
+        !bind.mainIsCanScreenRecording(prompt: false);
 
     return Consumer<ServerModel>(
       builder: (context, model, child) {
@@ -467,6 +471,60 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                     ),
                   ),
                 ),
+                if (requiresScreenRecordingPermission) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: isDark
+                          ? const Color(0xFF3A2A20)
+                          : const Color(0xFFFFF4E8),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: const Color(0xFFE6A15A)
+                            .withOpacity(isDark ? 0.55 : 0.35),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.visibility_outlined,
+                          size: 16,
+                          color: Color(0xFFE6A15A),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            translate('config_screen'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              height: 1.35,
+                              color: textColor?.withOpacity(0.85),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () {
+                            bind.mainIsCanScreenRecording(prompt: true);
+                            watchIsCanScreenRecording = true;
+                            setState(() {});
+                          },
+                          style: TextButton.styleFrom(
+                            foregroundColor: const Color(0xFFE6A15A),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          child: Text(translate('Configure')),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -575,7 +633,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
-    
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
@@ -611,13 +669,15 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             GestureDetector(
               onDoubleTap: () {
                 if (showOneTime) {
-                  Clipboard.setData(ClipboardData(text: model.serverPasswd.text));
+                  Clipboard.setData(
+                      ClipboardData(text: model.serverPasswd.text));
                   showToast(translate("Copied"));
                 }
               },
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: showOneTime
                       ? MyTheme.accent.withOpacity(0.08)
@@ -633,8 +693,11 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 child: Row(
                   children: [
                     Icon(
-                      showOneTime ? Icons.check_circle_outline : Icons.lock_clock,
-                      color: showOneTime ? const Color(0xFF10B981) : Colors.grey,
+                      showOneTime
+                          ? Icons.check_circle_outline
+                          : Icons.lock_clock,
+                      color:
+                          showOneTime ? const Color(0xFF10B981) : Colors.grey,
                       size: 16,
                     ),
                     const SizedBox(width: 8),
@@ -646,34 +709,36 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                           fontWeight: FontWeight.w500,
                           fontFamily: 'monospace',
                           letterSpacing: 2,
-                          color: showOneTime ? textColor : textColor?.withOpacity(0.5),
+                          color: showOneTime
+                              ? textColor
+                              : textColor?.withOpacity(0.5),
                         ),
                       ),
                     ),
                     // 刷新图标紧贴密码右侧（inline）
                     if (showOneTime)
                       Obx(() => InkWell(
-                        onTap: () => bind.mainUpdateTemporaryPassword(),
-                        onHover: (v) => refreshHover.value = v,
-                        borderRadius: BorderRadius.circular(6),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          padding: const EdgeInsets.all(5),
-                          decoration: BoxDecoration(
-                            color: refreshHover.value
-                                ? MyTheme.accent.withOpacity(0.15)
-                                : Colors.transparent,
+                            onTap: () => bind.mainUpdateTemporaryPassword(),
+                            onHover: (v) => refreshHover.value = v,
                             borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Icon(
-                            Icons.refresh_rounded,
-                            size: 17,
-                            color: refreshHover.value
-                                ? MyTheme.accent
-                                : MyTheme.accent.withOpacity(0.55),
-                          ),
-                        ),
-                      )),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              padding: const EdgeInsets.all(5),
+                              decoration: BoxDecoration(
+                                color: refreshHover.value
+                                    ? MyTheme.accent.withOpacity(0.15)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Icon(
+                                Icons.refresh_rounded,
+                                size: 17,
+                                color: refreshHover.value
+                                    ? MyTheme.accent
+                                    : MyTheme.accent.withOpacity(0.55),
+                              ),
+                            ),
+                          )),
                   ],
                 ),
               ),
@@ -682,39 +747,40 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             if (!bind.isDisableSettings()) ...[
               const SizedBox(height: 10),
               InkWell(
-                onTap: () => DesktopSettingPage.switch2page(SettingsTabKey.safety),
+                onTap: () =>
+                    DesktopSettingPage.switch2page(SettingsTabKey.safety),
                 onHover: (value) => editHover.value = value,
                 borderRadius: BorderRadius.circular(8),
                 child: Obx(() => Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  decoration: BoxDecoration(
-                    color: editHover.value
-                        ? Colors.grey.withOpacity(0.12)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: (textColor?.withOpacity(0.12)) ??
-                          Colors.grey.withOpacity(0.12),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.edit_outlined,
-                          size: 14, color: textColor?.withOpacity(0.6)),
-                      const SizedBox(width: 6),
-                      Text(
-                        translate('Set permanent password'),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: textColor?.withOpacity(0.7),
-                          fontWeight: FontWeight.w500,
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      decoration: BoxDecoration(
+                        color: editHover.value
+                            ? Colors.grey.withOpacity(0.12)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: (textColor?.withOpacity(0.12)) ??
+                              Colors.grey.withOpacity(0.12),
                         ),
                       ),
-                    ],
-                  ),
-                )),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.edit_outlined,
+                              size: 14, color: textColor?.withOpacity(0.6)),
+                          const SizedBox(width: 6),
+                          Text(
+                            translate('Set permanent password'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: textColor?.withOpacity(0.7),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )),
               ),
             ],
           ],
@@ -726,9 +792,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildTip(BuildContext context) {
     final isOutgoingOnly = bind.isOutgoingOnly();
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    
+
     return Padding(
-      padding: const EdgeInsets.only(left: 12.0, right: 12, top: 16.0, bottom: 8),
+      padding:
+          const EdgeInsets.only(left: 12.0, right: 12, top: 16.0, bottom: 8),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.start,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1084,7 +1151,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
     bool isChattyMethod(String methodName) {
       switch (methodName) {
-        case kWindowBumpMouse: return true;
+        case kWindowBumpMouse:
+          return true;
       }
 
       return false;
@@ -1093,7 +1161,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     rustDeskWinManager.setMethodHandler((call, fromWindowId) async {
       if (!isChattyMethod(call.method)) {
         debugPrint(
-          "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
+            "[Main] call ${call.method} with args ${call.arguments} from window $fromWindowId");
       }
       if (call.method == kWindowMainWindowOnTop) {
         windowOnTop(null);
@@ -1128,9 +1196,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
           connToken: call.arguments['connToken'],
         );
       } else if (call.method == kWindowBumpMouse) {
-        return RdPlatformChannel.instance.bumpMouse(
-          dx: call.arguments['dx'],
-          dy: call.arguments['dy']);
+        return RdPlatformChannel.instance
+            .bumpMouse(dx: call.arguments['dx'], dy: call.arguments['dy']);
       } else if (call.method == kWindowEventMoveTabToNewWindow) {
         final args = call.arguments.split(',');
         int? windowId;

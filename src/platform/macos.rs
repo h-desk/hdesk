@@ -29,10 +29,12 @@ use objc::{class, msg_send, sel, sel_impl};
 use scrap::{libc::c_void, quartz::ffi::*};
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::Mutex,
+    time::{Duration, Instant},
 };
 
 // macOS boolean_t is defined as `int` in <mach/boolean.h>
@@ -41,6 +43,21 @@ type BooleanT = hbb_common::libc::c_int;
 static PRIVILEGES_SCRIPTS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/src/platform/privileges_scripts");
 static mut LATEST_SEED: i32 = 0;
+
+/// Editable focus hint data returned by `get_editable_focus_hint`.
+/// All rects are in desktop global coordinates (pixels, origin = virtual-desktop top-left).
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct EditableFocusHintInfo {
+    pub editable: bool,
+    pub caret: (i32, i32, i32, i32),
+    pub editor: (i32, i32, i32, i32),
+    pub window: (i32, i32, i32, i32),
+    pub pane: (i32, i32, i32, i32),
+    pub display_idx: i32,
+    pub content_kind: i32,
+    /// Local-only stable window identity for change detection. Not sent over wire.
+    pub foreground_hwnd: isize,
+}
 
 #[inline]
 fn get_update_temp_dir() -> PathBuf {
@@ -116,19 +133,208 @@ pub fn is_can_screen_recording(prompt: bool) -> bool {
     autoreleasepool(|| unsafe_is_can_screen_recording(prompt))
 }
 
+pub fn get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFocusHintInfo> {
+    autoreleasepool(|| unsafe_get_editable_focus_hint(displays))
+}
+
+fn rect_has_area(rect: (i32, i32, i32, i32)) -> bool {
+    rect.2 > 0 && rect.3 > 0
+}
+
+fn rect_center(rect: (i32, i32, i32, i32)) -> Option<(i32, i32)> {
+    if !rect_has_area(rect) {
+        return None;
+    }
+    Some((rect.0 + rect.2 / 2, rect.1 + rect.3 / 2))
+}
+
+fn point_in_display(display: &DisplayInfo, x: i32, y: i32) -> bool {
+    let right = display.x + display.width;
+    let bottom = display.y + display.height;
+    x >= display.x && x <= right && y >= display.y && y <= bottom
+}
+
+fn find_display_idx_for_point(displays: &[DisplayInfo], x: i32, y: i32) -> Option<usize> {
+    displays
+        .iter()
+        .position(|display| point_in_display(display, x, y))
+}
+
+fn normalize_rect_to_display(
+    rect: (i32, i32, i32, i32),
+    display: &DisplayInfo,
+) -> (i32, i32, i32, i32) {
+    if !rect_has_area(rect) {
+        return rect;
+    }
+    (rect.0 - display.x, rect.1 - display.y, rect.2, rect.3)
+}
+
+fn normalize_editable_focus_hint_to_display(
+    displays: &[DisplayInfo],
+    mut hint: EditableFocusHintInfo,
+) -> EditableFocusHintInfo {
+    let display_idx = rect_center(hint.editor)
+        .and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy))
+        .or_else(|| rect_center(hint.pane).and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy)))
+        .or_else(|| rect_center(hint.window).and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy)))
+        .or_else(|| rect_center(hint.caret).and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy)));
+
+    let Some(display_idx) = display_idx else {
+        return hint;
+    };
+    let Some(display) = displays.get(display_idx) else {
+        return hint;
+    };
+
+    hint.caret = normalize_rect_to_display(hint.caret, display);
+    hint.editor = normalize_rect_to_display(hint.editor, display);
+    hint.window = normalize_rect_to_display(hint.window, display);
+    hint.pane = normalize_rect_to_display(hint.pane, display);
+    hint.display_idx = display_idx as i32;
+    hint
+}
+
+fn make_foreground_window_id(pid: i32, window_number: i32) -> isize {
+    (((pid as i64) << 32) | (window_number as u32 as i64)) as isize
+}
+
+unsafe fn get_frontmost_pid() -> Option<i32> {
+    let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
+    if workspace == nil {
+        return None;
+    }
+    let app: id = msg_send![workspace, frontmostApplication];
+    if app == nil {
+        return None;
+    }
+    let pid: i32 = msg_send![app, processIdentifier];
+    if pid > 0 { Some(pid) } else { None }
+}
+
+unsafe fn number_value(dict: id, key: &str) -> Option<f64> {
+    let key: id = NSString::alloc(nil).init_str(key);
+    let value: id = msg_send![dict, objectForKey: key];
+    if value == nil {
+        return None;
+    }
+    let value: f64 = msg_send![value, doubleValue];
+    Some(value)
+}
+
+unsafe fn read_window_bounds(bounds_dict: id) -> Option<(i32, i32, i32, i32)> {
+    if bounds_dict == nil {
+        return None;
+    }
+    let x = number_value(bounds_dict, "X")?;
+    let y = number_value(bounds_dict, "Y")?;
+    let width = number_value(bounds_dict, "Width")?;
+    let height = number_value(bounds_dict, "Height")?;
+    let rect = (
+        x.round() as i32,
+        y.round() as i32,
+        width.round() as i32,
+        height.round() as i32,
+    );
+    rect_has_area(rect).then_some(rect)
+}
+
+unsafe fn find_frontmost_window(frontmost_pid: i32) -> Option<((i32, i32, i32, i32), isize)> {
+    let window_list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+    if window_list.is_null() {
+        return None;
+    }
+
+    let layer_key: id = NSString::alloc(nil).init_str("kCGWindowLayer");
+    let bounds_key: id = NSString::alloc(nil).init_str("kCGWindowBounds");
+    let window_number_key: id = NSString::alloc(nil).init_str("kCGWindowNumber");
+    let count = CFArrayGetCount(window_list);
+    for idx in 0..count {
+        let window: id = CFArrayGetValueAtIndex(window_list, idx) as _;
+        if window == nil {
+            continue;
+        }
+
+        let pid_value: id = msg_send![window, valueForKey: kCGWindowOwnerPID as id];
+        if pid_value == nil {
+            continue;
+        }
+        let owner_pid: i32 = msg_send![pid_value, intValue];
+        if owner_pid != frontmost_pid {
+            continue;
+        }
+
+        let layer_value: id = msg_send![window, objectForKey: layer_key];
+        if layer_value != nil {
+            let layer: i32 = msg_send![layer_value, intValue];
+            if layer != 0 {
+                continue;
+            }
+        }
+
+        let bounds_value: id = msg_send![window, objectForKey: bounds_key];
+        let Some(window_rect) = read_window_bounds(bounds_value) else {
+            continue;
+        };
+
+        let window_number_value: id = msg_send![window, objectForKey: window_number_key];
+        let window_number: i32 = if window_number_value == nil {
+            0
+        } else {
+            msg_send![window_number_value, intValue]
+        };
+
+        return Some((window_rect, make_foreground_window_id(owner_pid, window_number)));
+    }
+
+    None
+}
+
+fn fallback_window_hint(displays: &[DisplayInfo], frontmost_pid: i32) -> Option<EditableFocusHintInfo> {
+    let display_idx = get_focused_display(displays.to_vec()).or_else(|| (!displays.is_empty()).then_some(0))?;
+    let display = displays.get(display_idx)?;
+    let window = (display.x, display.y, display.width, display.height);
+    Some(normalize_editable_focus_hint_to_display(
+        displays,
+        EditableFocusHintInfo {
+            editable: false,
+            caret: (0, 0, 0, 0),
+            editor: (0, 0, 0, 0),
+            window,
+            pane: window,
+            display_idx: display_idx as i32,
+            content_kind: 0,
+            foreground_hwnd: make_foreground_window_id(frontmost_pid, 0),
+        },
+    ))
+}
+
+fn unsafe_get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFocusHintInfo> {
+    let frontmost_pid = unsafe { get_frontmost_pid() }?;
+    if let Some((window, foreground_hwnd)) = unsafe { find_frontmost_window(frontmost_pid) } {
+        return Some(normalize_editable_focus_hint_to_display(
+            displays,
+            EditableFocusHintInfo {
+                editable: false,
+                caret: (0, 0, 0, 0),
+                editor: (0, 0, 0, 0),
+                window,
+                pane: window,
+                display_idx: 0,
+                content_kind: 0,
+                foreground_hwnd,
+            },
+        ));
+    }
+
+    fallback_window_hint(displays, frontmost_pid)
+}
+
 // macOS >= 10.15
 // https://stackoverflow.com/questions/56597221/detecting-screen-recording-settings-on-macos-catalina/
-// remove just one app from all the permissions: tccutil reset All com.carriez.rustdesk
-fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
-    // we got some report that we show no permission even after set it, so we try to use new api for screen recording check
-    // the new api is only available on macOS >= 10.15, but on stackoverflow, some people said it works on >= 10.16 (crash on 10.15),
-    // but also some said it has bug on 10.16, so we just use it on 11.0.
-    unsafe {
-        if CanUseNewApiForScreenCaptureCheck() == YES {
-            return IsCanScreenRecording(if prompt { YES } else { NO }) == YES;
-        }
-    }
-    let mut can_record_screen: bool = false;
+// remove just one app from all the permissions: tccutil reset All cn.yunjichuangzhi.hdesk
+fn legacy_can_record_screen(prompt: bool) -> bool {
+    let mut can_record_screen = false;
     unsafe {
         let our_pid: i32 = std::process::id() as _;
         let our_pid: id = msg_send![class!(NSNumber), numberWithInteger: our_pid];
@@ -153,7 +359,7 @@ fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
                 runningApplicationWithProcessIdentifier: pid
             ];
             if p.is_null() {
-                // ignore processes we don't have access to, such as WindowServer, which manages the windows named "Menubar" and "Backstop Menubar"
+                // Ignore processes we don't have access to, such as WindowServer.
                 continue;
             }
             let url: id = msg_send![p, executableURL];
@@ -163,20 +369,49 @@ fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
             }
             let is_dock: BOOL = msg_send![exe_name, isEqual: dock];
             if is_dock == YES {
-                // ignore the Dock, which provides the desktop picture
+                // Ignore the Dock, which provides the desktop picture.
                 continue;
             }
             can_record_screen = true;
             break;
         }
     }
-    if !can_record_screen && prompt {
-        use scrap::{Capturer, Display};
-        if let Ok(d) = Display::primary() {
-            Capturer::new(d).ok();
+    if !can_record_screen {
+        use scrap::{Capturer, Display, TraitCapturer};
+        if let Ok(display) = Display::primary() {
+            if let Ok(mut capturer) = Capturer::new(display) {
+                let deadline = Instant::now() + Duration::from_millis(250);
+                while Instant::now() < deadline {
+                    match capturer.frame(Duration::from_millis(30)) {
+                        Ok(_) => {
+                            can_record_screen = true;
+                            break;
+                        }
+                        Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(15));
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
         }
     }
     can_record_screen
+}
+
+fn unsafe_is_can_screen_recording(prompt: bool) -> bool {
+    // we got some report that we show no permission even after set it, so we try to use new api for screen recording check
+    // the new api is only available on macOS >= 10.15, but on stackoverflow, some people said it works on >= 10.16 (crash on 10.15),
+    // but also some said it has bug on 10.16, so we just use it on 11.0.
+    unsafe {
+        if CanUseNewApiForScreenCaptureCheck() == YES {
+            let can_record_screen = IsCanScreenRecording(if prompt { YES } else { NO }) == YES;
+            if can_record_screen {
+                return true;
+            }
+        }
+    }
+    legacy_can_record_screen(prompt)
 }
 
 pub fn install_service() -> bool {

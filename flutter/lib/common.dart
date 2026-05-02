@@ -260,7 +260,7 @@ class MyTheme {
   static const Color darkGray = Color.fromARGB(255, 148, 148, 148);
   static const Color cmIdColor = Color(0xFF21790B);
   static const Color dark = Colors.black87;
-  static const Color button = Color(0xFF3B82F6);  // 按钮颜色也更新
+  static const Color button = Color(0xFF3B82F6); // 按钮颜色也更新
   static const Color hoverBorder = Color(0xFF999999);
 
   // ListTile - 统一圆角为 8px
@@ -1053,7 +1053,7 @@ void showToast(String text,
 // - Remove argument "contentPadding", no need for it, all should look the same.
 // - Remove "required" for argument "content". See simple confirm dialog "delete peer", only title and actions are used. No need to "content: SizedBox.shrink()".
 // - Make dead code alive, transform arguments "onSubmit" and "onCancel" into correspondenting buttons "ConfirmOkButton", "CancelButton".
-class CustomAlertDialog extends StatelessWidget {
+class CustomAlertDialog extends StatefulWidget {
   const CustomAlertDialog(
       {Key? key,
       this.title,
@@ -1062,7 +1062,7 @@ class CustomAlertDialog extends StatelessWidget {
       this.actions,
       this.contentPadding,
       this.contentBoxConstraints = const BoxConstraints(maxWidth: 500),
-  this.scrollable = true,
+      this.scrollable = true,
       this.onSubmit,
       this.onCancel})
       : super(key: key);
@@ -1078,52 +1078,74 @@ class CustomAlertDialog extends StatelessWidget {
   final Function()? onCancel;
 
   @override
-  Widget build(BuildContext context) {
-    // request focus
-    FocusScopeNode scopeNode = FocusScopeNode();
-    Future.delayed(Duration.zero, () {
-      if (!scopeNode.hasFocus) scopeNode.requestFocus();
+  State<CustomAlertDialog> createState() => _CustomAlertDialogState();
+}
+
+class _CustomAlertDialogState extends State<CustomAlertDialog> {
+  late final FocusScopeNode _scopeNode;
+  bool _tabTapped = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _scopeNode = FocusScopeNode();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_scopeNode.hasFocus) {
+        _scopeNode.requestFocus();
+      }
     });
-    bool tabTapped = false;
-    if (isAndroid) gFFI.invokeMethod("enable_soft_keyboard", true);
+    if (isAndroid) {
+      gFFI.invokeMethod("enable_soft_keyboard", true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scopeNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _tabTapped = false;
 
     return FocusScope(
-      node: scopeNode,
+      node: _scopeNode,
       autofocus: true,
       onKey: (node, key) {
         if (key.logicalKey == LogicalKeyboardKey.escape) {
           if (key is RawKeyDownEvent) {
-            onCancel?.call();
+            widget.onCancel?.call();
           }
           return KeyEventResult.handled; // avoid TextField exception on escape
-        } else if (!tabTapped &&
-            onSubmit != null &&
+        } else if (!_tabTapped &&
+            widget.onSubmit != null &&
             (key.logicalKey == LogicalKeyboardKey.enter ||
                 key.logicalKey == LogicalKeyboardKey.numpadEnter)) {
-          if (key is RawKeyDownEvent) onSubmit?.call();
+          if (key is RawKeyDownEvent) widget.onSubmit?.call();
           return KeyEventResult.handled;
         } else if (key.logicalKey == LogicalKeyboardKey.tab) {
           if (key is RawKeyDownEvent) {
-            scopeNode.nextFocus();
-            tabTapped = true;
+            _scopeNode.nextFocus();
+            _tabTapped = true;
           }
           return KeyEventResult.handled;
         }
         return KeyEventResult.ignored;
       },
       child: AlertDialog(
-          scrollable: scrollable,
+          scrollable: widget.scrollable,
           clipBehavior: Clip.antiAlias,
-          title: title,
+          title: widget.title,
           content: ConstrainedBox(
-            constraints: contentBoxConstraints,
-            child: content,
+            constraints: widget.contentBoxConstraints,
+            child: widget.content,
           ),
-          actions: actions,
-          titlePadding: titlePadding ?? MyTheme.dialogTitlePadding(),
-          contentPadding: contentPadding != null
-              ? EdgeInsets.all(contentPadding!)
-              : MyTheme.dialogContentPadding(actions: actions is List),
+          actions: widget.actions,
+          titlePadding: widget.titlePadding ?? MyTheme.dialogTitlePadding(),
+          contentPadding: widget.contentPadding != null
+              ? EdgeInsets.all(widget.contentPadding!)
+              : MyTheme.dialogContentPadding(actions: widget.actions is List),
           actionsPadding: MyTheme.dialogActionsPadding(),
           buttonPadding: MyTheme.dialogButtonPadding),
     );
@@ -3684,35 +3706,33 @@ Widget loadPowered(BuildContext context) {
 
 // max 300 x 60
 Widget loadLogo() {
-  return FutureBuilder<ByteData>(
-      future: rootBundle.load('assets/logo.png'),
-      builder: (BuildContext context, AsyncSnapshot<ByteData> snapshot) {
-        if (snapshot.hasData) {
-          final image = Image.asset(
-            'assets/logo.png',
-            fit: BoxFit.contain,
-            errorBuilder: (ctx, error, stackTrace) {
-              return Container();
-            },
-          );
-          return Container(
-            constraints: BoxConstraints(maxWidth: 300, maxHeight: 60),
-            child: image,
-          ).marginOnly(left: 12, right: 12, top: 12);
-        }
-        return const Offstage();
-      });
+  return Container(
+    constraints: BoxConstraints(maxWidth: 300, maxHeight: 60),
+    child: Image.asset(
+      'assets/logo.png',
+      fit: BoxFit.contain,
+      errorBuilder: (ctx, error, stackTrace) => Image.asset(
+        'assets/icon.png',
+        fit: BoxFit.contain,
+        errorBuilder: (ctx, error, stackTrace) => Align(
+          alignment: Alignment.centerLeft,
+          child: Icon(Icons.computer_rounded, size: 48),
+        ),
+      ),
+    ),
+  ).marginOnly(left: 12, right: 12, top: 12);
 }
 
 Widget loadIcon(double size) {
-  return Image.asset('assets/icon.png',
-      width: size,
-      height: size,
-      errorBuilder: (ctx, error, stackTrace) => SvgPicture.asset(
-            'assets/icon.svg',
-            width: size,
-            height: size,
-          ));
+  return Image.asset(
+    'assets/icon.png',
+    width: size,
+    height: size,
+    errorBuilder: (ctx, error, stackTrace) => Icon(
+      Icons.computer_rounded,
+      size: size,
+    ),
+  );
 }
 
 var imcomingOnlyHomeSize = Size(280, 300);
@@ -4174,8 +4194,7 @@ Widget? buildAvatarWidget({
       width: size,
       height: size,
       fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) =>
-          fallback ?? SizedBox.shrink(),
+      errorBuilder: (_, __, ___) => fallback ?? SizedBox.shrink(),
     ),
   );
 }

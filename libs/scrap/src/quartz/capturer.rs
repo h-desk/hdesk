@@ -1,13 +1,17 @@
 use std::ptr;
 
 use block::{Block, ConcreteBlock};
+use hbb_common::log;
 use hbb_common::libc::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::config::Config;
 use super::display::Display;
 use super::ffi::*;
 use super::frame::Frame;
+
+static FIRST_FRAME_COMPLETE_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub struct Capturer {
     stream: CGDisplayStreamRef,
@@ -39,6 +43,9 @@ impl Capturer {
                 return;
             }
             if status == FrameComplete {
+                if !FIRST_FRAME_COMPLETE_LOGGED.swap(true, Ordering::Relaxed) {
+                    log::info!("macOS CGDisplayStream delivered first FrameComplete callback");
+                }
                 handler(unsafe { Frame::new(surface) });
             }
         })

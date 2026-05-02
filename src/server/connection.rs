@@ -266,6 +266,8 @@ pub struct Connection {
     tx_input: std_mpsc::Sender<MessageInput>,
     // handle input messages
     video_ack_required: bool,
+    #[cfg(target_os = "macos")]
+    logged_first_video_received_ack: bool,
     server_audit_conn: String,
     server_audit_file: String,
     lr: LoginRequest,
@@ -449,6 +451,8 @@ impl Connection {
             show_my_cursor: false,
             tx_input,
             video_ack_required: false,
+            #[cfg(target_os = "macos")]
+            logged_first_video_received_ack: false,
             server_audit_conn: "".to_owned(),
             server_audit_file: "".to_owned(),
             lr: Default::default(),
@@ -564,6 +568,9 @@ impl Connection {
         {
             (_tx_clip, rx_clip) = mpsc::unbounded_channel::<i32>();
         }
+
+        #[cfg(target_os = "macos")]
+        let mut logged_synthetic_video_fetch = false;
 
         loop {
             tokio::select! {
@@ -837,6 +844,15 @@ impl Connection {
                 Some((instant, value)) = rx_video.recv() => {
                     if !conn.video_ack_required {
                         if let Some(message::Union::VideoFrame(vf)) = &value.union {
+                            #[cfg(target_os = "macos")]
+                            if !logged_synthetic_video_fetch {
+                                logged_synthetic_video_fetch = true;
+                                log::info!(
+                                    "conn #{} uses synthetic video fetch notification because video_ack_required=false for display #{}",
+                                    id,
+                                    vf.display,
+                                );
+                            }
                             video_service::notify_video_frame_fetched(vf.display as usize, id, Some(instant.into()));
                         }
                     }
@@ -2229,6 +2245,15 @@ impl Connection {
             }
         }
         self.video_ack_required = lr.video_ack_required;
+        #[cfg(target_os = "macos")]
+        log::info!(
+            "conn #{} login video_ack_required={}, peer_platform={}, peer_version={}, peer_id={}",
+            self.inner.id,
+            self.video_ack_required,
+            lr.my_platform,
+            lr.version,
+            lr.my_id,
+        );
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -3201,6 +3226,14 @@ impl Connection {
                         self.update_auto_disconnect_timer();
                     }
                     Some(misc::Union::VideoReceived(_)) => {
+                        #[cfg(target_os = "macos")]
+                        if !self.logged_first_video_received_ack {
+                            self.logged_first_video_received_ack = true;
+                            log::info!(
+                                "conn #{} received first VideoReceived ack from peer",
+                                self.inner.id,
+                            );
+                        }
                         video_service::notify_video_frame_fetched_by_conn_id(
                             self.inner.id,
                             Some(Instant::now().into()),

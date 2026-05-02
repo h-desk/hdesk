@@ -648,6 +648,16 @@ fn run(vs: VideoService) -> ResultType<()> {
     let repeat_encode_max = 10;
     let mut encode_fail_counter = 0;
     let mut first_frame = true;
+    #[cfg(target_os = "macos")]
+    let mut macos_first_frame_would_block_count = 0u32;
+    #[cfg(target_os = "macos")]
+    let mut macos_first_frame_warned = false;
+    #[cfg(target_os = "macos")]
+    let mut macos_first_frame_invalid_count = 0u32;
+    #[cfg(target_os = "macos")]
+    let mut macos_first_frame_invalid_warned = false;
+    #[cfg(target_os = "macos")]
+    let mut macos_first_frame_expected_conn_ids: Option<HashSet<i32>> = None;
     let capture_width = c.width;
     let capture_height = c.height;
     let (mut second_instant, mut send_counter) = (Instant::now(), 0);
@@ -765,6 +775,7 @@ fn run(vs: VideoService) -> ResultType<()> {
                     }
 
                     let frame = frame.to(encoder.yuvfmt(), &mut yuv, &mut mid_data)?;
+                    let is_first_frame_send = first_frame;
                     let send_conn_ids = handle_one_frame(
                         display_idx,
                         &sp,
@@ -777,8 +788,36 @@ fn run(vs: VideoService) -> ResultType<()> {
                         capture_width,
                         capture_height,
                     )?;
+                    #[cfg(target_os = "macos")]
+                    if is_first_frame_send && !send_conn_ids.is_empty() {
+                        macos_first_frame_expected_conn_ids = Some(send_conn_ids.clone());
+                    }
                     frame_controller.set_send(now, send_conn_ids);
                     send_counter += 1;
+                } else {
+                    #[cfg(target_os = "macos")]
+                    {
+                        if first_frame {
+                            macos_first_frame_invalid_count =
+                                macos_first_frame_invalid_count.saturating_add(1);
+                            if !macos_first_frame_invalid_warned
+                                && macos_first_frame_invalid_count >= 30
+                            {
+                                macos_first_frame_invalid_warned = true;
+                                let screen_recording_granted =
+                                    crate::platform::macos::is_can_screen_recording(false);
+                                log::warn!(
+                                    "No first frame from macOS capture after {} invalid frames for {} (display #{}, {}x{}), screen_recording_granted={}",
+                                    macos_first_frame_invalid_count,
+                                    sp.name(),
+                                    display_idx,
+                                    capture_width,
+                                    capture_height,
+                                    screen_recording_granted,
+                                );
+                            }
+                        }
+                    }
                 }
                 #[cfg(windows)]
                 {
@@ -820,10 +859,34 @@ fn run(vs: VideoService) -> ResultType<()> {
                         }
                     }
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    if first_frame {
+                        macos_first_frame_would_block_count =
+                            macos_first_frame_would_block_count.saturating_add(1);
+                        if !macos_first_frame_warned
+                            && macos_first_frame_would_block_count >= 90
+                        {
+                            macos_first_frame_warned = true;
+                            let screen_recording_granted =
+                                crate::platform::macos::is_can_screen_recording(false);
+                            log::warn!(
+                                "No first frame from macOS capture after {} WouldBlock iterations for {} (display #{}, {}x{}), screen_recording_granted={}",
+                                macos_first_frame_would_block_count,
+                                sp.name(),
+                                display_idx,
+                                capture_width,
+                                capture_height,
+                                screen_recording_granted,
+                            );
+                        }
+                    }
+                }
                 if !encoder.latency_free() && yuv.len() > 0 {
                     // yun.len() > 0 means the frame is not texture.
                     if repeat_encode_counter < repeat_encode_max {
                         repeat_encode_counter += 1;
+                        let is_first_frame_send = first_frame;
                         let send_conn_ids = handle_one_frame(
                             display_idx,
                             &sp,
@@ -836,6 +899,10 @@ fn run(vs: VideoService) -> ResultType<()> {
                             capture_width,
                             capture_height,
                         )?;
+                        #[cfg(target_os = "macos")]
+                        if is_first_frame_send && !send_conn_ids.is_empty() {
+                            macos_first_frame_expected_conn_ids = Some(send_conn_ids.clone());
+                        }
                         frame_controller.set_send(now, send_conn_ids);
                         send_counter += 1;
                     }
@@ -861,6 +928,11 @@ fn run(vs: VideoService) -> ResultType<()> {
                 {
                     would_block_count = 0;
                 }
+                #[cfg(target_os = "macos")]
+                {
+                    macos_first_frame_would_block_count = 0;
+                    macos_first_frame_warned = false;
+                }
             }
         }
 
@@ -875,6 +947,31 @@ fn run(vs: VideoService) -> ResultType<()> {
             // break if all connections have received current frame
             if fetched_conn_ids.len() >= frame_controller.send_conn_ids.len() {
                 break;
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(expected_conn_ids) = macos_first_frame_expected_conn_ids.take() {
+            if fetched_conn_ids.len() >= expected_conn_ids.len() {
+                log::info!(
+                    "macOS first frame confirmations completed within {}ms for display #{}: expected {:?}, fetched {:?}",
+                    timeout_millis,
+                    display_idx,
+                    expected_conn_ids,
+                    fetched_conn_ids,
+                );
+            } else {
+                let missing_conn_ids = expected_conn_ids
+                    .difference(&fetched_conn_ids)
+                    .copied()
+                    .collect::<Vec<_>>();
+                log::warn!(
+                    "macOS first frame confirmations incomplete after {}ms for display #{}: expected {:?}, fetched {:?}, missing {:?}",
+                    timeout_millis,
+                    display_idx,
+                    expected_conn_ids,
+                    fetched_conn_ids,
+                    missing_conn_ids,
+                );
             }
         }
         DISPLAY_CONN_IDS.lock().unwrap().remove(&display_idx);
@@ -1162,6 +1259,15 @@ fn handle_one_frame(
                 .as_mut()
                 .map(|r| r.write_message(&msg, width, height));
             send_conn_ids = sp.send_video_frame(msg);
+            #[cfg(target_os = "macos")]
+            if first {
+                log::info!(
+                    "macOS first encoded frame sent to {} connections for display #{}: {:?}",
+                    send_conn_ids.len(),
+                    display,
+                    send_conn_ids,
+                );
+            }
         }
         Err(e) => {
             *encode_fail_counter += 1;

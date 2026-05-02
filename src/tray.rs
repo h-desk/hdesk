@@ -33,7 +33,7 @@ fn make_tray() -> hbb_common::ResultType<()> {
     let icon;
     #[cfg(target_os = "macos")]
     {
-        icon = include_bytes!("../res/mac-tray-dark-x2.png"); // use as template, so color is not important
+        icon = include_bytes!("../res/tray-icon.ico"); // packaged apps prefer flutter_assets/icon.png; this is a dev-build fallback
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -267,14 +267,19 @@ fn load_icon_from_asset() -> Option<image::DynamicImage> {
         return None;
     };
     #[cfg(target_os = "macos")]
-    let path = path.join("../Frameworks/App.framework/Resources/flutter_assets/assets/icon.png");
+    let candidates = [
+        path.join("../Frameworks/App.framework/Resources/flutter_assets/assets/icon.ico"),
+        path.join("../Resources/AppIcon.icns"),
+    ];
     #[cfg(windows)]
-    let path = path.join(r"data\flutter_assets\assets\icon.png");
+    let candidates = [path.join(r"data\flutter_assets\assets\icon.png")];
     #[cfg(target_os = "linux")]
-    let path = path.join(r"data/flutter_assets/assets/icon.png");
-    if path.exists() {
-        if let Ok(image) = image::open(path) {
-            return Some(image);
+    let candidates = [path.join(r"data/flutter_assets/assets/icon.png")];
+    for path in candidates {
+        if path.exists() {
+            if let Ok(image) = image::open(path) {
+                return Some(image);
+            }
         }
     }
     None

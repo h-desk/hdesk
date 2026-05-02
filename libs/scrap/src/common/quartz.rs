@@ -1,7 +1,12 @@
 use crate::{quartz, Frame, Pixfmt};
+use hbb_common::log;
 use std::marker::PhantomData;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, TryLockError};
 use std::{io, mem};
+
+static FIRST_QUARTZ_FRAME_LOGGED: AtomicBool = AtomicBool::new(false);
+static FIRST_QUARTZ_BGRA_LOGGED: AtomicBool = AtomicBool::new(false);
 
 pub struct Capturer {
     inner: quartz::Capturer,
@@ -53,8 +58,25 @@ impl crate::TraitCapturer for Capturer {
 
                 match frame {
                     Some(mut frame) => {
+                        if !FIRST_QUARTZ_FRAME_LOGGED.swap(true, Ordering::Relaxed) {
+                            log::info!(
+                                "macOS quartz first frame reached capturer: inner_len={}, width={}, height={}",
+                                frame.inner().len(),
+                                self.width(),
+                                self.height(),
+                            );
+                        }
                         crate::would_block_if_equal(&mut self.saved_raw_data, frame.inner())?;
                         frame.surface_to_bgra(self.height());
+                        if !FIRST_QUARTZ_BGRA_LOGGED.swap(true, Ordering::Relaxed) {
+                            log::info!(
+                                "macOS quartz first frame converted to bgra: len={}, stride={}, width={}, height={}",
+                                frame.len(),
+                                frame.stride(),
+                                self.width(),
+                                self.height(),
+                            );
+                        }
                         Ok(Frame::PixelBuffer(PixelBuffer {
                             frame,
                             data: PhantomData,

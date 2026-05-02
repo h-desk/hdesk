@@ -38,10 +38,10 @@ if(VCPKG_TARGET_IS_UWP OR (VCPKG_TARGET_IS_WINDOWS AND VCPKG_TARGET_ARCHITECTURE
     set(aom_target_cpu "-DAOM_TARGET_CPU=generic")
 endif()
 
-if(VCPKG_TARGET_IS_WINDOWS AND VCPKG_CRT_LINKAGE STREQUAL "static")
+if((VCPKG_TARGET_IS_WINDOWS AND VCPKG_CRT_LINKAGE STREQUAL "static") OR VCPKG_TARGET_IS_OSX)
     # NASM 3.x no longer advertises -Ox in `nasm -hf`, which breaks AOM's
-    # configure-time assembler probe. H264 host build does not depend on AOM
-    # SIMD performance, so prefer a generic build over a hard failure here.
+    # configure-time assembler probe. The host build here does not depend on
+    # AOM SIMD performance, so prefer a generic build over a hard failure.
     set(aom_target_cpu "-DAOM_TARGET_CPU=generic")
 endif()
 

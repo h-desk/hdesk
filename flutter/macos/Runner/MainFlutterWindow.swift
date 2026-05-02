@@ -6,14 +6,16 @@ import desktop_multi_window
 
 import desktop_drop
 import device_info_plus
+import file_selector_macos
 import flutter_custom_cursor
+import local_notifier
 import package_info_plus
-import path_provider_foundation
 import screen_retriever
 import sqflite
 // import tray_manager
 import uni_links_desktop
 import url_launcher_macos
+import video_player_avfoundation
 import wakelock_plus
 import window_manager
 import window_size
@@ -55,14 +57,18 @@ class MainFlutterWindow: NSWindow {
             self.setMethodHandler(registrar: controller.registrar(forPlugin: "RustDeskPlugin"))
             DesktopDropPlugin.register(with: controller.registrar(forPlugin: "DesktopDropPlugin"))
             DeviceInfoPlusMacosPlugin.register(with: controller.registrar(forPlugin: "DeviceInfoPlusMacosPlugin"))
+            FileSelectorPlugin.register(with: controller.registrar(forPlugin: "FileSelectorPlugin"))
             FlutterCustomCursorPlugin.register(with: controller.registrar(forPlugin: "FlutterCustomCursorPlugin"))
+            LocalNotifierPlugin.register(with: controller.registrar(forPlugin: "LocalNotifierPlugin"))
             FPPPackageInfoPlusPlugin.register(with: controller.registrar(forPlugin: "FPPPackageInfoPlusPlugin"))
-            PathProviderPlugin.register(with: controller.registrar(forPlugin: "PathProviderPlugin"))
+            ScreenRetrieverPlugin.register(with: controller.registrar(forPlugin: "ScreenRetrieverPlugin"))
             SqflitePlugin.register(with: controller.registrar(forPlugin: "SqflitePlugin"))
             // TrayManagerPlugin.register(with: controller.registrar(forPlugin: "TrayManagerPlugin"))
             UniLinksDesktopPlugin.register(with: controller.registrar(forPlugin: "UniLinksDesktopPlugin"))
             UrlLauncherPlugin.register(with: controller.registrar(forPlugin: "UrlLauncherPlugin"))
+            FVPVideoPlayerPlugin.register(with: controller.registrar(forPlugin: "FVPVideoPlayerPlugin"))
             WakelockPlusMacosPlugin.register(with: controller.registrar(forPlugin: "WakelockPlusMacosPlugin"))
+            WindowManagerPlugin.register(with: controller.registrar(forPlugin: "WindowManagerPlugin"))
             WindowSizePlugin.register(with: controller.registrar(forPlugin: "WindowSizePlugin"))
             TextureRgbaRendererPlugin.register(with: controller.registrar(forPlugin: "TextureRgbaRendererPlugin"))
         }

@@ -143,7 +143,7 @@ pub fn new() -> ServerPtr {
         // EditableFocus: runs independently of cursor-embed mode.
         // Allows mobile clients to auto-open keyboard and adjust viewport
         // whenever the PC focused element changes editability.
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos"))]
         server.add_service(Box::new(input_service::new_editable_focus()));
     }
     #[cfg(all(target_os = "windows", feature = "flutter"))]

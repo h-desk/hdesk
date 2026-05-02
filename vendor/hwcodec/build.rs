@@ -267,7 +267,11 @@ mod ffmpeg {
             target = target.replace("x64", "x86");
         }
         println!("cargo:info={}", target);
-        path.push("installed");
+        if let Ok(vcpkg_installed_root) = std::env::var("VCPKG_INSTALLED_ROOT") {
+            path = vcpkg_installed_root.into();
+        } else {
+            path.push("installed");
+        }
         path.push(target);
 
         println!(

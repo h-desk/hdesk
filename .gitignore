@@ -33,6 +33,7 @@ appimage/*.xz
 # flutter
 flutter/linux/build/**
 flutter/linux/cmake-build-debug/**
+tmp_test/macos-local-derived-data/
 # flatpak
 flatpak/.flatpak-builder/**
 flatpak/ccache/**

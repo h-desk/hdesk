@@ -8,7 +8,7 @@
 - 这个提交已经把 `vendor/hwcodec`、`vendor/machine-uid`、`vendor/magnum-opus` 从 gitlink 改成了主仓普通目录；如果 Mac 上 clone 下来后这三个目录又表现成“子模块占位”或“空目录”，说明拿到的不是新提交。
 - `libs/hbb_common` 仍然是正常子模块，所以 clone 时要带 `--recurse-submodules`，或者 clone 后执行 `git submodule update --init --recursive`。
 - Flutter 的 macOS 工程已经存在，仓内可见 `flutter/macos/Runner.xcodeproj`、`flutter/macos/Podfile`、`flutter/macos/Runner/Configs/AppInfo.xcconfig`。
-- 当前 macOS 产物名称仍然是 `RustDesk.app`，不是 `HDesk.app`。这是仓内现状，不是构建失败。
+- 当前 macOS 产物名称是 `HDesk.app`。
 - 当前 macOS Flutter 工程最低目标版本是 `10.14`。
 
 ## 仓内已验证事实
@@ -17,11 +17,11 @@
 - `build.py` 的 macOS Flutter 打包逻辑会先执行：
   - `MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features flutter --release`
   - `cd flutter && flutter build macos --release`
-  - 再把 `target/release/service` 复制到 `RustDesk.app/Contents/MacOS/`
+  - 再把 `target/release/service` 复制到 `HDesk.app/Contents/MacOS/`
 - `flutter/macos/Podfile` 里是 `platform :osx, '10.14'`。
 - `flutter/macos/Runner/Configs/AppInfo.xcconfig` 里当前还是：
-  - `PRODUCT_NAME = RustDesk`
-  - `PRODUCT_BUNDLE_IDENTIFIER = com.carriez.flutterHbb`
+  - `PRODUCT_NAME = HDesk`
+  - `PRODUCT_BUNDLE_IDENTIFIER = cn.yunjichuangzhi.hdesk`
 - 根仓 `README.md` 的依赖说明明确要求：
   - 安装 Rust 开发环境
   - 安装 C++ 构建环境
@@ -110,11 +110,23 @@ MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features flutter --release
 ```bash
 cd flutter
 flutter build macos --release
-cp -f ../target/release/service build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/
-open build/macos/Build/Products/Release/RustDesk.app
+cp -f ../target/release/service build/macos/Build/Products/Release/HDesk.app/Contents/MacOS/
+open build/macos/Build/Products/Release/HDesk.app
 ```
 
 如果这里能正常起 app，说明“Mac clone + vendor flatten + Flutter macOS 工程”这条链路已经通了。
+
+本地反复重建并部署到 `~/Applications/HDesk.app` 时，优先使用：
+
+```bash
+./res/osx-local-dev.sh
+```
+
+如果要显式指定稳定签名证书：
+
+```bash
+HDESK_MACOS_CODESIGN_IDENTITY="Developer ID Application: Hongchang Li (XHQ3R72JMN)" ./res/osx-local-dev.sh
+```
 
 ## 如果只是想本地调试，不急着打包 DMG
 
@@ -151,9 +163,9 @@ python3 build.py --flutter
 
 ## 看到这些现象时，不要误判
 
-### 1. 构建成功但产物还是 `RustDesk.app`
+### 1. 构建成功后的产物名称是 `HDesk.app`
 
-这是仓内当前真实配置，不是失败。macOS Flutter Runner 里 `PRODUCT_NAME` 还是 `RustDesk`。
+这是仓内当前真实配置，不是失败。macOS Flutter Runner 里 `PRODUCT_NAME` 是 `HDesk`。
 
 ### 2. `vendor` 看起来又像子模块
 
@@ -164,7 +176,7 @@ python3 build.py --flutter
 先确认这一步有没有做：
 
 ```bash
-cp -f ../target/release/service build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/
+cp -f ../target/release/service build/macos/Build/Products/Release/HDesk.app/Contents/MacOS/
 ```
 
 仓内 `build.py` 明确做了这一步，所以漏掉它会让运行时结果偏离标准打包路径。
@@ -184,7 +196,7 @@ cp -f ../target/release/service build/macos/Build/Products/Release/RustDesk.app/
 5. 先跑 `cargo check --lib`。
 6. 再跑 `MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features flutter --release`。
 7. 再跑 `flutter build macos --release`。
-8. 最后复制 `target/release/service` 到 `RustDesk.app/Contents/MacOS/` 并启动 app。
+8. 最后复制 `target/release/service` 到 `HDesk.app/Contents/MacOS/` 并启动 app。
 
 ## 当前最值得记住的一点
 

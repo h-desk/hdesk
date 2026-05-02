@@ -352,8 +352,8 @@ cargo check --lib
 MACOSX_DEPLOYMENT_TARGET=10.14 cargo build --features flutter --release
 cd flutter
 flutter build macos --release
-cp -f ../target/release/service build/macos/Build/Products/Release/RustDesk.app/Contents/MacOS/
-open build/macos/Build/Products/Release/RustDesk.app
+cp -f ../target/release/service build/macos/Build/Products/Release/HDesk.app/Contents/MacOS/
+open build/macos/Build/Products/Release/HDesk.app
 ```
 
 ## 一句话路线图

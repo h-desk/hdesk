@@ -40,13 +40,25 @@ impl Frame {
 
     pub fn surface_to_bgra<'a>(&'a mut self, h: usize) {
         unsafe {
-            let plane0 = IOSurfaceGetBaseAddressOfPlane(self.surface, 0);
+            let mut base = IOSurfaceGetBaseAddressOfPlane(self.surface, 0);
             self.bgra_stride = IOSurfaceGetBytesPerRowOfPlane(self.surface, 0);
-            self.bgra.resize(self.bgra_stride * h, 0);
+
+            if base.is_null() || self.bgra_stride == 0 {
+                base = IOSurfaceGetBaseAddress(self.surface);
+                self.bgra_stride = IOSurfaceGetBytesPerRow(self.surface);
+            }
+
+            if base.is_null() || self.bgra_stride == 0 {
+                self.bgra.clear();
+                return;
+            }
+
+            let copy_len = (self.bgra_stride * h).min(IOSurfaceGetAllocSize(self.surface));
+            self.bgra.resize(copy_len, 0);
             std::ptr::copy_nonoverlapping(
-                plane0 as _,
+                base as _,
                 self.bgra.as_mut_ptr(),
-                self.bgra_stride * h,
+                copy_len,
             );
         }
     }
