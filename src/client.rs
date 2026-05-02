@@ -4053,21 +4053,21 @@ lazy_static::lazy_static! {
 /// * `text` - The text of the message.
 #[inline]
 pub fn check_if_retry(msgtype: &str, title: &str, text: &str, retry_for_relay: bool) -> bool {
+    let text_lower = text.to_lowercase();
     msgtype == "error"
         && title == "Connection Error"
         && ((text.contains("10054") || text.contains("104")) && retry_for_relay
-            || (!text.to_lowercase().contains("offline")
-                && !text.to_lowercase().contains("not exist")
-                && (!text.to_lowercase().contains("handshake")
+            || (!text_lower.contains("offline")
+                && !text_lower.contains("not exist")
+                && !text_lower.contains("reset by the peer")
+                && (!text_lower.contains("handshake")
                     // https://github.com/snapview/tungstenite-rs/blob/e7e060a89a72cb08e31c25a6c7284dc1bd982e23/src/error.rs#L248
-                    || text
-                        .to_lowercase()
-                        .contains("connection reset without closing handshake") && use_ws())
-                && !text.to_lowercase().contains("failed")
-                && !text.to_lowercase().contains("resolve")
-                && !text.to_lowercase().contains("mismatch")
-                && !text.to_lowercase().contains("manually")
-                && !text.to_lowercase().contains("not allowed")))
+                    || text_lower.contains("connection reset without closing handshake") && use_ws())
+                && !text_lower.contains("failed")
+                && !text_lower.contains("resolve")
+                && !text_lower.contains("mismatch")
+                && !text_lower.contains("manually")
+                && !text_lower.contains("not allowed")))
 }
 
 pub async fn hc_connection(
