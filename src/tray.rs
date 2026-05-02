@@ -60,7 +60,7 @@ fn make_tray() -> hbb_common::ResultType<()> {
     // The tray icon is only shown when the service is running, so we don't need to check
     // the `stop-service` option here.
     let quit_i = if !hide_stop_service {
-        Some(MenuItem::new(translate("Stop service".to_owned()), true, None))
+        Some(MenuItem::new(translate("Exit".to_owned()), true, None))
     } else {
         None
     };

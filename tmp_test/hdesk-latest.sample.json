@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "downloads": {
+    "windows": {
+      "x86_64": {
+        "exe": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/tag/1.0.0",
+        "directExe": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/download/1.0.0/hdesk-1.0.0-x86_64.exe",
+        "msi": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/download/1.0.0/hdesk-1.0.0-x86_64.msi",
+        "releasePage": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/tag/1.0.0"
+      },
+      "install": {
+        "exe": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/download/1.0.0/hdesk-1.0.0-install.exe",
+        "msi": "https://releases.hdesk.yunjichuangzhi.cn/hdesk/releases/download/1.0.0/hdesk-1.0.0-x86_64.msi"
+      }
+    }
+  }
+}

@@ -659,6 +659,17 @@ impl FlutterHandler {
             .store(crate::ui_interface::use_texture_render(), Ordering::Relaxed);
         self.display_rgbas.write().unwrap().clear();
     }
+
+    fn retain_display_rgbas(&self, active_displays: &HashSet<usize>) {
+        if active_displays.is_empty() {
+            self.display_rgbas.write().unwrap().clear();
+            return;
+        }
+        self.display_rgbas
+            .write()
+            .unwrap()
+            .retain(|display, _| active_displays.contains(display));
+    }
 }
 
 impl InvokeUiSession for FlutterHandler {
@@ -1751,8 +1762,52 @@ pub fn session_next_rgba(session_id: SessionID, display: usize) {
     }
 }
 
+fn normalize_ffi_usize(
+    raw: usize,
+    max_expected: usize,
+    field: &str,
+    session_id: &SessionID,
+) -> Option<usize> {
+    #[cfg(target_pointer_width = "64")]
+    if raw > max_expected {
+        let low = raw as u32 as usize;
+        let high = raw >> 32;
+        if low > 0 && low <= max_expected && high != 0 {
+            log::warn!(
+                "Normalize suspicious {}={} (0x{:x}) for session {} to {}",
+                field,
+                raw,
+                raw,
+                session_id,
+                low
+            );
+            return Some(low);
+        }
+    }
+    if raw > max_expected {
+        log::error!(
+            "Reject suspicious {}={} (0x{:x}) for session {}",
+            field,
+            raw,
+            raw,
+            session_id
+        );
+        return None;
+    }
+    Some(raw)
+}
+
 #[inline]
 pub fn session_set_size(session_id: SessionID, display: usize, width: usize, height: usize) {
+    let Some(display) = normalize_ffi_usize(display, 64, "display", &session_id) else {
+        return;
+    };
+    let Some(width) = normalize_ffi_usize(width, 32_768, "width", &session_id) else {
+        return;
+    };
+    let Some(height) = normalize_ffi_usize(height, 32_768, "height", &session_id) else {
+        return;
+    };
     for s in sessions::get_sessions() {
         if let Some(h) = s
             .ui_handler
@@ -2126,6 +2181,7 @@ pub mod sessions {
             match remove_ret {
                 Some(_) => {
                     if write_lock.is_empty() {
+                        s.ui_handler.display_rgbas.write().unwrap().clear();
                         remove_peer_key = Some(peer_key.clone());
                     } else {
                         check_remove_unused_displays(None, id, s, &write_lock);
@@ -2185,12 +2241,43 @@ pub mod sessions {
                     .cloned(),
             );
         }
+        session.ui_handler.retain_display_rgbas(&remains_displays);
         if !remains_displays.is_empty() {
             session.capture_displays(
                 vec![],
                 vec![],
                 remains_displays.iter().map(|d| *d as i32).collect(),
             );
+        }
+    }
+
+    pub fn reset_session_display_state(session_id: &SessionID) {
+        for session in SESSIONS.read().unwrap().values() {
+            let mut handlers = session.ui_handler.session_handlers.write().unwrap();
+            if !handlers.contains_key(session_id) {
+                continue;
+            }
+            if let Some(handler) = handlers.get_mut(session_id) {
+                handler.displays.clear();
+                handler.renderer.map_display_sessions.write().unwrap().clear();
+            }
+            let mut remains_displays = HashSet::new();
+            for (other_id, other_handler) in handlers.iter() {
+                if other_id == session_id {
+                    continue;
+                }
+                remains_displays.extend(
+                    other_handler
+                        .renderer
+                        .map_display_sessions
+                        .read()
+                        .unwrap()
+                        .keys()
+                        .cloned(),
+                );
+            }
+            session.ui_handler.retain_display_rgbas(&remains_displays);
+            break;
         }
     }
 
