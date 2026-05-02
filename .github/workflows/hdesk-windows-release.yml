@@ -1,0 +1,495 @@
+name: HDesk Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag or version. Examples: 1.0.1, v1.0.1
+        required: false
+        type: string
+      publish_latest:
+        description: Update self-hosted latest.json after upload
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  LLVM_VERSION: "15.0.6"
+  FLUTTER_VERSION: "3.24.5"
+  RUST_VERSION: "1.75"
+  VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
+  VCPKG_DEFAULT_HOST_TRIPLET: "x64-windows-static"
+  HDESK_UNSIGNED_DIR: "hdesk-unsigned"
+  HDESK_SIGNOUTPUT_DIR: "SignOutput"
+
+jobs:
+  resolve-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Resolve release version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo_version=$(python - <<'PY'
+from pathlib import Path
+for line in Path('Cargo.toml').read_text(encoding='utf-8').splitlines():
+    if line.startswith('version'):
+        print(line.split('=', 1)[1].strip().strip('"'))
+        break
+else:
+    raise SystemExit('Failed to read version from Cargo.toml')
+PY
+)
+          raw_tag='${{ inputs.release_tag }}'
+          if [ -z "$raw_tag" ]; then
+            raw_tag="$cargo_version"
+          fi
+          version="${raw_tag#v}"
+          if [ "$version" != "$cargo_version" ]; then
+            echo "::error::Cargo.toml version ($cargo_version) does not match release version ($version)."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$raw_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Validate required release settings
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_UNSIGNED_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_UNSIGNED_SIGNING_POLICY_SLUG }}
+          SIGNPATH_RELEASE_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_RELEASE_SIGNING_POLICY_SLUG }}
+          HDESK_RELEASES_HOST: ${{ vars.HDESK_RELEASES_HOST }}
+          HDESK_RELEASES_USER: ${{ vars.HDESK_RELEASES_USER }}
+          HDESK_RELEASES_REMOTE_ROOT: ${{ vars.HDESK_RELEASES_REMOTE_ROOT }}
+          HDESK_RELEASES_PUBLIC_BASE_URL: ${{ vars.HDESK_RELEASES_PUBLIC_BASE_URL }}
+          HDESK_RELEASES_SSH_KEY: ${{ secrets.HDESK_RELEASES_SSH_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in \
+            SIGNPATH_API_TOKEN \
+            SIGNPATH_ORGANIZATION_ID \
+            SIGNPATH_PROJECT_SLUG \
+            SIGNPATH_UNSIGNED_SIGNING_POLICY_SLUG \
+            SIGNPATH_RELEASE_SIGNING_POLICY_SLUG \
+            HDESK_RELEASES_HOST \
+            HDESK_RELEASES_USER \
+            HDESK_RELEASES_REMOTE_ROOT \
+            HDESK_RELEASES_PUBLIC_BASE_URL \
+            HDESK_RELEASES_SSH_KEY
+          do
+            if [ -z "${!name}" ]; then
+              echo "::error::$name is required for HDesk Windows release workflow."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  build-topmost-window:
+    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
+    with:
+      upload-artifact: true
+      target: windows-2022
+      configuration: Release
+      platform: x64
+      target_version: Windows10
+
+  build-unsigned-windows:
+    runs-on: windows-2022
+    needs: [resolve-release, generate-bridge, build-topmost-window]
+    outputs:
+      artifact_id: ${{ steps.upload_unsigned.outputs.artifact-id }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Restore bridge files
+        uses: actions/download-artifact@v4
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+
+      - name: Replace engine with rustdesk custom flutter engine
+        shell: pwsh
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          Copy-Item -Path ".\windows-x64-release\*" -Destination "C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/" -Recurse -Force
+
+      - name: Patch Flutter
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$(dirname "$(dirname "$(which flutter)")")"
+          cd "$(dirname "$(dirname "$(which flutter)")")"
+          if [ "${{ env.FLUTTER_VERSION }}" = "3.24.5" ]; then
+            git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: hdesk-release-windows
+
+      - name: Setup vcpkg with GitHub Actions binary cache
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install vcpkg dependencies
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: ${{ env.VCPKG_DEFAULT_HOST_TRIPLET }}
+        shell: bash
+        run: |
+          if ! "$VCPKG_ROOT"/vcpkg install --triplet "${VCPKG_DEFAULT_HOST_TRIPLET}" --x-install-root="$VCPKG_ROOT/installed"; then
+            find "$VCPKG_ROOT" -name "*.log" | while read -r log_file; do
+              echo "$log_file:"
+              echo "======"
+              cat "$log_file"
+              echo "======"
+            done
+            exit 1
+          fi
+
+      - name: Build unsigned HDesk runner
+        shell: pwsh
+        run: |
+          python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+          if (Test-Path $env:HDESK_UNSIGNED_DIR) {
+            Remove-Item $env:HDESK_UNSIGNED_DIR -Recurse -Force
+          }
+          Move-Item .\flutter\build\windows\x64\runner\Release $env:HDESK_UNSIGNED_DIR
+
+      - name: Download usbmmidd driver bundle
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath .
+          Remove-Item .\usbmmidd_v2\Win32 -Recurse -Force
+          Remove-Item .\usbmmidd_v2\deviceinstaller64.exe, .\usbmmidd_v2\deviceinstaller.exe, .\usbmmidd_v2\usbmmidd.bat -Force
+          Move-Item .\usbmmidd_v2 ".\$env:HDESK_UNSIGNED_DIR\usbmmidd_v2"
+
+      - name: Download printer driver files
+        shell: pwsh
+        run: |
+          try {
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/rustdesk_printer_driver_v4-1.4.zip -OutFile rustdesk_printer_driver_v4-1.4.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/printer_driver_adapter.zip -OutFile printer_driver_adapter.zip
+            Invoke-WebRequest -Uri https://github.com/rustdesk/hbb_common/releases/download/driver/sha256sums -OutFile sha256sums
+
+            $checksumDriver = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*rustdesk_printer_driver_v4-1.4\.zip$').Matches.Groups[1].Value
+            $downloadSumDriver = Get-FileHash -Path rustdesk_printer_driver_v4-1.4.zip -Algorithm SHA256
+            $checksumAdapter = (Select-String -Path .\sha256sums -Pattern '^([a-fA-F0-9]{64}) \*printer_driver_adapter\.zip$').Matches.Groups[1].Value
+            $downloadSumAdapter = Get-FileHash -Path printer_driver_adapter.zip -Algorithm SHA256
+            if ($checksumDriver -eq $downloadSumDriver.Hash -and $checksumAdapter -eq $downloadSumAdapter.Hash) {
+              Expand-Archive rustdesk_printer_driver_v4-1.4.zip -DestinationPath .
+              New-Item -ItemType Directory -Path ".\$env:HDESK_UNSIGNED_DIR\drivers" -Force | Out-Null
+              Move-Item .\rustdesk_printer_driver_v4-1.4 ".\$env:HDESK_UNSIGNED_DIR\drivers\RustDeskPrinterDriver"
+              Expand-Archive printer_driver_adapter.zip -DestinationPath .
+              Move-Item .\printer_driver_adapter.dll ".\$env:HDESK_UNSIGNED_DIR\printer_driver_adapter.dll"
+            } else {
+              Write-Host 'Printer driver checksum mismatch, skip bundling printer driver.'
+            }
+          } catch {
+            Write-Host 'Ignore printer driver bundle error.'
+          }
+
+      - name: Capture Runner.res for portable packer
+        shell: bash
+        run: |
+          mkdir -p "./${HDESK_UNSIGNED_DIR}/.release-metadata"
+          runner_res=$(find . -name "Runner.res" | head -n 1)
+          if [ -n "$runner_res" ]; then
+            cp "$runner_res" "./${HDESK_UNSIGNED_DIR}/.release-metadata/Runner.res"
+          fi
+
+      - name: Download topmost window artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: topmostwindow-artifacts
+          path: ./${{ env.HDESK_UNSIGNED_DIR }}
+
+      - name: Upload unsigned HDesk directory
+        id: upload_unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdesk-unsigned-windows-x86_64
+          path: ${{ env.HDESK_UNSIGNED_DIR }}
+          if-no-files-found: error
+
+  sign-unsigned-windows:
+    runs-on: ubuntu-latest
+    needs: [build-unsigned-windows]
+    outputs:
+      artifact_id: ${{ steps.upload_signed.outputs.artifact-id }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Submit SignPath request for unsigned Windows directory
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_UNSIGNED_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.build-unsigned-windows.outputs.artifact_id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-unsigned
+
+      - name: Upload signed Windows directory
+        id: upload_signed
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdesk-signed-windows-x86_64
+          path: signed-unsigned
+          if-no-files-found: error
+
+  package-release-assets:
+    runs-on: windows-2022
+    needs: [resolve-release, sign-unsigned-windows]
+    outputs:
+      artifact_id: ${{ steps.upload_release_unsigned.outputs.artifact-id }}
+    env:
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Download signed Windows directory
+        uses: actions/download-artifact@v4
+        with:
+          name: hdesk-signed-windows-x86_64
+          path: signed-input
+
+      - name: Normalize signed Windows directory
+        shell: pwsh
+        run: |
+          if (Test-Path .\hdesk) {
+            Remove-Item .\hdesk -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path .\hdesk | Out-Null
+          $sourceCandidates = @(
+            '.\signed-input\hdesk-unsigned',
+            '.\signed-input'
+          )
+          $sourceDir = $null
+          foreach ($candidate in $sourceCandidates) {
+            if (Test-Path (Join-Path $candidate 'hdesk.exe')) {
+              $sourceDir = $candidate
+              break
+            }
+          }
+          if (-not $sourceDir) {
+            Get-ChildItem .\signed-input -Recurse
+            throw 'Failed to locate signed HDesk directory.'
+          }
+          Copy-Item (Join-Path $sourceDir '*') .\hdesk -Recurse -Force
+
+      - name: Restore Runner.res if available
+        shell: pwsh
+        run: |
+          if (Test-Path .\hdesk\.release-metadata\Runner.res) {
+            Copy-Item .\hdesk\.release-metadata\Runner.res .\libs\portable\Runner.res -Force
+          }
+
+      - name: Build self-extracted EXE assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          python -m pip install -r requirements.txt
+          python ./generate.py -f ../../hdesk/ -o . -e ../../hdesk/hdesk.exe
+          popd
+          mkdir -p "./${HDESK_SIGNOUTPUT_DIR}"
+          mv ./target/release/rustdesk-portable-packer.exe "./${HDESK_SIGNOUTPUT_DIR}/hdesk-${VERSION}-x86_64.exe"
+          cp "./${HDESK_SIGNOUTPUT_DIR}/hdesk-${VERSION}-x86_64.exe" "./${HDESK_SIGNOUTPUT_DIR}/hdesk-${VERSION}-install.exe"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          Push-Location .\res\msi
+          python preprocess.py --arp -d ../../hdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          Move-Item .\Package\bin\x64\Release\en-us\Package.msi "..\..\$env:HDESK_SIGNOUTPUT_DIR\hdesk-$env:VERSION-x86_64.msi" -Force
+          Pop-Location
+
+      - name: Upload unsigned release assets
+        id: upload_release_unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdesk-release-assets-unsigned
+          path: ${{ env.HDESK_SIGNOUTPUT_DIR }}
+          if-no-files-found: error
+
+  sign-release-assets:
+    runs-on: ubuntu-latest
+    needs: [package-release-assets]
+    outputs:
+      artifact_id: ${{ steps.upload_signed_release.outputs.artifact-id }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Submit SignPath request for final Windows assets
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_RELEASE_SIGNING_POLICY_SLUG }}
+          github-artifact-id: ${{ needs.package-release-assets.outputs.artifact_id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-release
+
+      - name: Upload signed release assets
+        id: upload_signed_release
+        uses: actions/upload-artifact@v4
+        with:
+          name: hdesk-release-assets-signed
+          path: signed-release
+          if-no-files-found: error
+
+  publish-self-hosted-release:
+    runs-on: ubuntu-latest
+    needs: [resolve-release, sign-release-assets]
+    env:
+      VERSION: ${{ needs.resolve-release.outputs.version }}
+      HDESK_RELEASES_HOST: ${{ vars.HDESK_RELEASES_HOST }}
+      HDESK_RELEASES_PORT: ${{ vars.HDESK_RELEASES_PORT }}
+      HDESK_RELEASES_USER: ${{ vars.HDESK_RELEASES_USER }}
+      HDESK_RELEASES_REMOTE_ROOT: ${{ vars.HDESK_RELEASES_REMOTE_ROOT }}
+      HDESK_RELEASES_PUBLIC_BASE_URL: ${{ vars.HDESK_RELEASES_PUBLIC_BASE_URL }}
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Download signed release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: hdesk-release-assets-signed
+          path: release-input
+
+      - name: Prepare release tree and latest.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "release-tree/hdesk/releases/download/${VERSION}"
+
+          source_dir=""
+          for candidate in "release-input/${HDESK_SIGNOUTPUT_DIR}" "release-input"; do
+            if [ -f "$candidate/hdesk-${VERSION}-x86_64.exe" ]; then
+              source_dir="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$source_dir" ]; then
+            echo "::error::Failed to locate signed release assets."
+            find release-input -maxdepth 3 -type f
+            exit 1
+          fi
+
+          cp "$source_dir/hdesk-${VERSION}-x86_64.exe" "release-tree/hdesk/releases/download/${VERSION}/"
+          cp "$source_dir/hdesk-${VERSION}-x86_64.msi" "release-tree/hdesk/releases/download/${VERSION}/"
+          cp "$source_dir/hdesk-${VERSION}-install.exe" "release-tree/hdesk/releases/download/${VERSION}/"
+
+          python .github/scripts/create_hdesk_release_manifest.py \
+            --version "${VERSION}" \
+            --public-base-url "${HDESK_RELEASES_PUBLIC_BASE_URL}" \
+            --output release-tree/latest.json
+
+      - name: Setup SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.HDESK_RELEASES_SSH_KEY }}
+
+      - name: Trust releases host key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          port="${HDESK_RELEASES_PORT:-22}"
+          ssh-keyscan -p "$port" "$HDESK_RELEASES_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload signed assets to self-hosted releases
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="${HDESK_RELEASES_PORT:-22}"
+          remote_base="${HDESK_RELEASES_REMOTE_ROOT%/}"
+          ssh -p "$port" "$HDESK_RELEASES_USER@$HDESK_RELEASES_HOST" "mkdir -p '$remote_base/hdesk/releases/download/${VERSION}'"
+          rsync -av -e "ssh -p $port" "release-tree/hdesk/releases/download/${VERSION}/" "$HDESK_RELEASES_USER@$HDESK_RELEASES_HOST:$remote_base/hdesk/releases/download/${VERSION}/"
+
+      - name: Upload latest.json
+        if: ${{ inputs.publish_latest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          port="${HDESK_RELEASES_PORT:-22}"
+          remote_base="${HDESK_RELEASES_REMOTE_ROOT%/}"
+          rsync -av -e "ssh -p $port" release-tree/latest.json "$HDESK_RELEASES_USER@$HDESK_RELEASES_HOST:$remote_base/latest.json"
+
+      - name: Summarize published URLs
+        shell: bash
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## Published HDesk Windows release
+
+          - Version: ${VERSION}
+          - MSI: ${HDESK_RELEASES_PUBLIC_BASE_URL%/}/hdesk/releases/download/${VERSION}/hdesk-${VERSION}-x86_64.msi
+          - EXE: ${HDESK_RELEASES_PUBLIC_BASE_URL%/}/hdesk/releases/download/${VERSION}/hdesk-${VERSION}-x86_64.exe
+          - Legacy install EXE: ${HDESK_RELEASES_PUBLIC_BASE_URL%/}/hdesk/releases/download/${VERSION}/hdesk-${VERSION}-install.exe
+          - latest.json: ${HDESK_RELEASES_PUBLIC_BASE_URL%/}/latest.json
+          EOF

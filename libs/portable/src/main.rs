@@ -17,10 +17,17 @@ const APP_METADATA: &[u8] = include_bytes!("../app_metadata.toml");
 const APP_METADATA: &[u8] = &[];
 const APP_METADATA_CONFIG: &str = "meta.toml";
 const META_LINE_PREFIX_TIMESTAMP: &str = "timestamp = ";
-const APP_PREFIX: &str = "rustdesk";
 const APPNAME_RUNTIME_ENV_KEY: &str = "RUSTDESK_APPNAME";
 #[cfg(windows)]
 const SET_FOREGROUND_WINDOW_ENV_KEY: &str = "SET_FOREGROUND_WINDOW";
+
+fn get_app_prefix(reader: &BinaryReader) -> &str {
+    Path::new(&reader.exe)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("hdesk")
+}
 
 fn is_timestamp_matches(dir: &Path, ts: &mut u64) -> bool {
     let Ok(app_metadata) = std::str::from_utf8(APP_METADATA) else {
@@ -71,7 +78,7 @@ fn setup(
     } else {
         // home dir
         if let Some(dir) = dirs::data_local_dir() {
-            dir.join(APP_PREFIX)
+            dir.join(get_app_prefix(&reader))
         } else {
             eprintln!("not found data local dir");
             return None;

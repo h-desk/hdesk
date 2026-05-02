@@ -659,6 +659,17 @@ impl FlutterHandler {
             .store(crate::ui_interface::use_texture_render(), Ordering::Relaxed);
         self.display_rgbas.write().unwrap().clear();
     }
+
+    fn retain_display_rgbas(&self, active_displays: &HashSet<usize>) {
+        if active_displays.is_empty() {
+            self.display_rgbas.write().unwrap().clear();
+            return;
+        }
+        self.display_rgbas
+            .write()
+            .unwrap()
+            .retain(|display, _| active_displays.contains(display));
+    }
 }
 
 impl InvokeUiSession for FlutterHandler {
@@ -2126,6 +2137,7 @@ pub mod sessions {
             match remove_ret {
                 Some(_) => {
                     if write_lock.is_empty() {
+                        s.ui_handler.display_rgbas.write().unwrap().clear();
                         remove_peer_key = Some(peer_key.clone());
                     } else {
                         check_remove_unused_displays(None, id, s, &write_lock);
@@ -2185,6 +2197,7 @@ pub mod sessions {
                     .cloned(),
             );
         }
+        session.ui_handler.retain_display_rgbas(&remains_displays);
         if !remains_displays.is_empty() {
             session.capture_displays(
                 vec![],

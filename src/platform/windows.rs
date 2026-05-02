@@ -3412,6 +3412,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         import_config = get_import_config(&exe),
     );
     run_cmds(cmds, debug, "install")?;
+    ensure_service_ready("install")?;
     run_after_run_cmds(silent);
     Ok(())
 }
@@ -4763,6 +4764,12 @@ if exist \"{tray_shortcut}\" del /f /q \"{tray_shortcut}\"
         log::debug!("{err}");
         return true;
     }
+    if let Err(err) = ensure_service_ready("install-service") {
+        Config::set_option("stop-service".into(), "Y".into());
+        crate::ipc::EXIT_RECV_CLOSE.store(true, Ordering::Relaxed);
+        log::error!("{err}");
+        return true;
+    }
     run_after_run_cmds(false);
     std::process::exit(0);
 }
@@ -5268,6 +5275,13 @@ sc start {app_name}
 ",
     app_name = crate::get_app_name())
     }
+}
+
+fn ensure_service_ready(context: &str) -> ResultType<()> {
+    if config::is_outgoing_only() || is_self_service_running() {
+        return Ok(());
+    }
+    bail!("{context} failed: Windows service is not installed or not running");
 }
 
 fn run_after_run_cmds(silent: bool) {
