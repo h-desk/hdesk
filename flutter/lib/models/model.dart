@@ -132,6 +132,9 @@ class FfiModel with ChangeNotifier {
   bool isRefreshing = false;
 
   Timer? timerScreenshot;
+  Map<String, dynamic>? _editableFocusHint;
+  int _editableFocusAutoKeyboardSeq = 0;
+  String _lastEditableFocusActionKey = '';
 
   Rect? get rect => _rect;
   bool get isOriginalResolutionSet =>
@@ -164,6 +167,9 @@ class FfiModel with ChangeNotifier {
 
   bool get viewOnly => _viewOnly;
   bool get showMyCursor => _showMyCursor;
+  Map<String, dynamic>? get editableFocusHint =>
+      _editableFocusHint == null ? null : Map.unmodifiable(_editableFocusHint!);
+  int get editableFocusAutoKeyboardSeq => _editableFocusAutoKeyboardSeq;
 
   set inputBlocked(v) {
     _inputBlocked = v;
@@ -248,6 +254,9 @@ class FfiModel with ChangeNotifier {
     _secure = null;
     _direct = null;
     _inputBlocked = false;
+    _editableFocusHint = null;
+    _editableFocusAutoKeyboardSeq = 0;
+    _lastEditableFocusActionKey = '';
     _timer?.cancel();
     _timer = null;
     clearPermissions();
@@ -453,6 +462,8 @@ class FfiModel with ChangeNotifier {
         _handleSyncPeerOption(evt, peerId);
       } else if (name == 'follow_current_display') {
         handleFollowCurrentDisplay(evt, sessionId, peerId);
+      } else if (name == 'editable_focus_hint') {
+        await handleEditableFocusHint(evt, sessionId, peerId);
       } else if (name == 'use_texture_render') {
         _handleUseTextureRender(evt, sessionId, peerId);
       } else if (name == "selected_files") {
@@ -1671,11 +1682,12 @@ class FfiModel with ChangeNotifier {
 
   handleFollowCurrentDisplay(
       Map<String, dynamic> evt, SessionID sessionId, String peerId) async {
-    if (evt['display_idx'] != null) {
+    final display = _eventInt(evt['display_idx']);
+    if (display != null) {
       if (pi.currentDisplay == kAllDisplayValue) {
         return;
       }
-      _pi.currentDisplay = int.parse(evt['display_idx']);
+      _pi.currentDisplay = display;
       try {
         CurrentDisplayState.find(peerId).value = _pi.currentDisplay;
       } catch (e) {
@@ -1686,6 +1698,80 @@ class FfiModel with ChangeNotifier {
         sessionId: sessionId,
         value: Int32List.fromList([_pi.currentDisplay]),
       );
+    }
+    notifyListeners();
+  }
+
+  static int? _eventInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return int.tryParse('${value ?? ''}');
+  }
+
+  static bool _eventBool(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+    final normalized = '${value ?? ''}'.toLowerCase();
+    return normalized == 'true' || normalized == '1';
+  }
+
+  static List<int> _eventRect(dynamic value) {
+    final rect = List<int>.filled(4, 0);
+    if (value is! List) {
+      return rect;
+    }
+    for (var index = 0; index < min(rect.length, value.length); index += 1) {
+      rect[index] = _eventInt(value[index]) ?? 0;
+    }
+    return rect;
+  }
+
+  String _buildEditableFocusActionKey(Map<String, dynamic> evt) {
+    return jsonEncode({
+      'display_idx': _eventInt(evt['display_idx']) ?? 0,
+      'content_kind': _eventInt(evt['content_kind']) ?? 0,
+      'editor': _eventRect(evt['editor']),
+      'pane': _eventRect(evt['pane']),
+      'window': _eventRect(evt['window']),
+    });
+  }
+
+  Future<void> handleEditableFocusHint(
+      Map<String, dynamic> evt, SessionID sessionId, String peerId) async {
+    _editableFocusHint = Map<String, dynamic>.from(evt);
+
+    final displayIdx = _eventInt(evt['display_idx']);
+    if (displayIdx != null && displayIdx != _pi.currentDisplay) {
+      await handleFollowCurrentDisplay(
+        {'display_idx': displayIdx},
+        sessionId,
+        peerId,
+      );
+    }
+
+    if (!_eventBool(evt['editable'])) {
+      _lastEditableFocusActionKey = '';
+      notifyListeners();
+      return;
+    }
+
+    if (!isMobile ||
+        parent.target?.connType != ConnType.defaultConn ||
+        viewOnly ||
+        !keyboard) {
+      notifyListeners();
+      return;
+    }
+
+    final actionKey = _buildEditableFocusActionKey(evt);
+    if (actionKey != _lastEditableFocusActionKey) {
+      _lastEditableFocusActionKey = actionKey;
+      _editableFocusAutoKeyboardSeq += 1;
     }
     notifyListeners();
   }
@@ -2167,6 +2253,7 @@ class CanvasModel with ChangeNotifier {
   Timer? _timerMobileRestoreCanvasOffset;
   Offset? _offsetBeforeMobileSoftKeyboard;
   double? _scaleBeforeMobileSoftKeyboard;
+  String _lastEditableFocusViewportSignature = '';
 
   // `isMobileCanvasChanged` is used to avoid canvas reset when changing the input method
   // after showing the soft keyboard.
@@ -2653,10 +2740,283 @@ class CanvasModel with ChangeNotifier {
     _y = 0;
     _scale = 1.0;
     _lastViewStyle = ViewStyle.defaultViewStyle();
+    _lastEditableFocusViewportSignature = '';
     _timerMobileFocusCanvasCursor?.cancel();
     _timerMobileRestoreCanvasOffset?.cancel();
     _offsetBeforeMobileSoftKeyboard = null;
     _scaleBeforeMobileSoftKeyboard = null;
+  }
+
+  static int _editableFocusInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    return int.tryParse('${value ?? ''}') ?? 0;
+  }
+
+  static bool _editableFocusBool(dynamic value) {
+    if (value is bool) {
+      return value;
+    }
+    final normalized = '${value ?? ''}'.toLowerCase();
+    return normalized == 'true' || normalized == '1';
+  }
+
+  static Rect? _editableFocusRect(dynamic value) {
+    if (value is! List || value.length < 4) {
+      return null;
+    }
+    final width = _editableFocusInt(value[2]).toDouble();
+    final height = _editableFocusInt(value[3]).toDouble();
+    if (width <= 0 || height <= 0) {
+      return null;
+    }
+    return Rect.fromLTWH(
+      _editableFocusInt(value[0]).toDouble(),
+      _editableFocusInt(value[1]).toDouble(),
+      width,
+      height,
+    );
+  }
+
+  static Rect? _editableFocusClampRect(Rect rect, Rect bounds) {
+    final clamped = Rect.fromLTRB(
+      max(rect.left, bounds.left),
+      max(rect.top, bounds.top),
+      min(rect.right, bounds.right),
+      min(rect.bottom, bounds.bottom),
+    );
+    if (clamped.width <= 0 || clamped.height <= 0) {
+      return null;
+    }
+    return clamped;
+  }
+
+  static Rect? _editableFocusBottomBand(
+    Rect? rect, {
+    double heightFactor = 0.28,
+    double minHeight = 36,
+    double maxHeight = 120,
+  }) {
+    if (rect == null) {
+      return null;
+    }
+    final bandHeight = min(
+      max(rect.height * heightFactor, minHeight),
+      min(maxHeight, rect.height),
+    );
+    return Rect.fromLTWH(
+      rect.left,
+      rect.bottom - bandHeight,
+      rect.width,
+      bandHeight,
+    );
+  }
+
+  static Rect? _editableFocusCaretBand(Rect? caret, Rect? bounds) {
+    if (caret == null || bounds == null) {
+      return null;
+    }
+    final unit = max(caret.height, 18.0);
+    final expanded = Rect.fromCenter(
+      center: caret.center,
+      width: max(caret.width + unit * 10, unit * 12),
+      height: max(caret.height + unit * 4, unit * 3),
+    );
+    return _editableFocusClampRect(expanded, bounds);
+  }
+
+  static Rect? _editableFocusCodeContext(Rect? caret, Rect? editor) {
+    if (caret == null || editor == null) {
+      return null;
+    }
+    final unit = max(caret.height, 18.0);
+    final expanded = Rect.fromCenter(
+      center: caret.center,
+      width: max(caret.width + unit * 24, unit * 18),
+      height: max(caret.height + unit * 8, unit * 6),
+    );
+    return _editableFocusClampRect(expanded, editor);
+  }
+
+  static Rect? _preferredEditablePane(Rect? pane, Rect? window) {
+    if (pane == null) {
+      return null;
+    }
+    if (window == null) {
+      return pane;
+    }
+    final isDistinctWidth = pane.width < window.width * 0.95;
+    final isDistinctHeight = pane.height < window.height * 0.95;
+    final isDistinctHorizontal =
+        pane.left > window.left + 8 || pane.right < window.right - 8;
+    return isDistinctWidth || isDistinctHeight || isDistinctHorizontal
+        ? pane
+        : null;
+  }
+
+  bool applyMobileEditableFocusViewport({bool force = false}) {
+    if (!isMobile) {
+      return false;
+    }
+    final hint = parent.target?.ffiModel.editableFocusHint;
+    if (hint == null ||
+        !_editableFocusBool(hint['editable']) ||
+        parent.target?.imageModel.image == null) {
+      _lastEditableFocusViewportSignature = '';
+      return false;
+    }
+
+    updateSize();
+    final safeWidth = size.width;
+    final safeHeight = size.height;
+    final displayWidth = getDisplayWidth().toDouble();
+    final displayHeight = getDisplayHeight().toDouble();
+    if (safeWidth <= 0 ||
+        safeHeight <= 0 ||
+        displayWidth <= 0 ||
+        displayHeight <= 0) {
+      return false;
+    }
+
+    final fullRect = Rect.fromLTWH(0, 0, displayWidth, displayHeight);
+    final windowRect = _editableFocusRect(hint['window']);
+    final paneRect =
+        _preferredEditablePane(_editableFocusRect(hint['pane']), windowRect);
+    final editorRect = _editableFocusRect(hint['editor']);
+    final caretRect = _editableFocusRect(hint['caret']);
+    final editorBand = _editableFocusBottomBand(editorRect);
+    final windowBand = _editableFocusBottomBand(
+      windowRect,
+      heightFactor: 0.18,
+      minHeight: 44,
+      maxHeight: 160,
+    );
+    final caretBounds = editorRect ?? paneRect ?? windowRect ?? fullRect;
+    final caretBand = _editableFocusCaretBand(caretRect, caretBounds);
+    final codeContext = _editableFocusCodeContext(caretRect, editorRect);
+    final contentKind = _editableFocusInt(hint['content_kind']);
+
+    late final Rect targetRect;
+    late final Rect anchorRect;
+    switch (contentKind) {
+      case 3:
+        targetRect = paneRect ??
+            codeContext ??
+            editorBand ??
+            editorRect ??
+            caretBand ??
+            windowBand ??
+            windowRect ??
+            fullRect;
+        anchorRect = caretRect ?? editorRect ?? targetRect;
+        break;
+      case 2:
+        targetRect = paneRect ??
+            editorBand ??
+            editorRect ??
+            caretBand ??
+            windowBand ??
+            windowRect ??
+            fullRect;
+        anchorRect = editorRect ?? caretRect ?? targetRect;
+        break;
+      default:
+        targetRect = paneRect ??
+            editorBand ??
+            editorRect ??
+            caretBand ??
+            windowBand ??
+            windowRect ??
+            fullRect;
+        anchorRect = editorRect ?? caretRect ?? targetRect;
+        break;
+    }
+
+    final fitScale = min(safeWidth / displayWidth, safeHeight / displayHeight);
+    final maxScale = switch (contentKind) {
+      3 => 1.6,
+      2 => 1.8,
+      _ => 2.2,
+    };
+    final targetScale = min(
+      safeWidth / max(targetRect.width, 1.0),
+      safeHeight / max(targetRect.height, 1.0),
+    );
+    var newScale = targetScale.clamp(fitScale, maxScale).toDouble();
+    if (paneRect != null && editorBand != null && paneRect.width > editorBand.width * 2.0) {
+      final editorScale = min(
+        safeWidth / max(editorBand.width, 1.0),
+        safeHeight / max(editorBand.height, 1.0),
+      );
+      newScale = min(maxScale, max(newScale, editorScale));
+    }
+
+    final adjust = getAdjustY();
+    final desiredCenterX = safeWidth * 0.5;
+    final desiredBottom = safeHeight -
+        (contentKind == 3
+            ? min(96.0, safeHeight * 0.18)
+            : min(72.0, safeHeight * 0.14));
+    final horizontalAnchorX = (paneRect ?? targetRect).center.dx;
+    final verticalAnchorBottom = anchorRect.bottom;
+
+    var newX = desiredCenterX - horizontalAnchorX * newScale;
+    var newY = desiredBottom - verticalAnchorBottom * newScale - adjust;
+
+    final drawWidth = displayWidth * newScale;
+    final drawHeight = displayHeight * newScale;
+    final minX = safeWidth - drawWidth;
+    if (minX < 0) {
+      newX = newX.clamp(minX, 0.0);
+    } else {
+      newX = (safeWidth - drawWidth) / 2;
+    }
+    final minY = safeHeight - drawHeight - adjust;
+    final maxY = -adjust;
+    if (minY < maxY) {
+      newY = newY.clamp(minY, maxY);
+    } else {
+      newY = (safeHeight - drawHeight) / 2 - adjust;
+    }
+
+    final signature = jsonEncode({
+      'kind': contentKind,
+      'target': [
+        targetRect.left.round(),
+        targetRect.top.round(),
+        targetRect.width.round(),
+        targetRect.height.round(),
+      ],
+      'anchor': [
+        anchorRect.left.round(),
+        anchorRect.top.round(),
+        anchorRect.width.round(),
+        anchorRect.height.round(),
+      ],
+      'safe': [safeWidth.round(), safeHeight.round()],
+      'adjust': adjust.round(),
+    });
+    if (!force && signature == _lastEditableFocusViewportSignature) {
+      return false;
+    }
+    _lastEditableFocusViewportSignature = signature;
+
+    if (!force &&
+        (newScale - _scale).abs() < 0.01 &&
+        (newX - _x).abs() < 1 &&
+        (newY - _y).abs() < 1) {
+      return false;
+    }
+
+    _x = newX;
+    _y = newY;
+    _scale = newScale;
+    notifyListeners();
+    return true;
   }
 
   updateScrollPercent() {
@@ -2964,7 +3324,12 @@ class CursorModel with ChangeNotifier {
     if (isMobile && _lastKeyboardIsVisible != keyboardIsVisible) {
       if (keyboardIsVisible) {
         parent.target?.canvasModel.saveMobileOffsetBeforeSoftKeyboard();
-        parent.target?.canvasModel.mobileFocusCanvasCursor();
+        final handled = parent.target?.canvasModel
+                .applyMobileEditableFocusViewport(force: true) ??
+            false;
+        if (!handled) {
+          parent.target?.canvasModel.mobileFocusCanvasCursor();
+        }
         parent.target?.canvasModel.isMobileCanvasChanged = false;
       } else {
         parent.target?.canvasModel.restoreMobileOffsetAfterSoftKeyboard();

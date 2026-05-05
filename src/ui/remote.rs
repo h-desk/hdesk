@@ -311,6 +311,8 @@ impl InvokeUiSession for SciterHandler {
         self.call("setCurrentDisplay", &make_args!(_disp_idx));
     }
 
+    fn set_editable_focus(&self, _hint: &EditableFocusHint) {}
+
     fn set_multiple_windows_session(&self, sessions: Vec<WindowsSession>) {
         let mut v = Value::array(0);
         let mut sessions = sessions;

@@ -62,6 +62,15 @@ use std::{
 
 pub const OPTION_REFRESH: &'static str = "refresh";
 
+fn should_disable_hardware_encoder(error: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    if error == "no valid frame" {
+        return false;
+    }
+
+    true
+}
+
 type FrameFetchedNotifierSender = UnboundedSender<(i32, Option<Instant>)>;
 type FrameFetchedNotifierReceiver = Arc<TokioMutex<UnboundedReceiver<(i32, Option<Instant>)>>>;
 
@@ -1271,6 +1280,7 @@ fn handle_one_frame(
         }
         Err(e) => {
             *encode_fail_counter += 1;
+            let error_text = e.to_string();
             // Encoding errors are not frequent except on Android
             if !cfg!(target_os = "android") {
                 log::error!("encode fail: {e:?}, times: {}", *encode_fail_counter,);
@@ -1285,12 +1295,14 @@ fn handle_one_frame(
             if (first && !repeat) || *encode_fail_counter >= max_fail_times {
                 *encode_fail_counter = 0;
                 if encoder.is_hardware() {
-                    encoder.disable();
+                    if should_disable_hardware_encoder(&error_text) {
+                        encoder.disable();
+                    }
                     log::error!("switch due to encoding fails, first frame: {first}, error: {e:?}");
                     bail!("SWITCH");
                 }
             }
-            match e.to_string().as_str() {
+            match error_text.as_str() {
                 scrap::codec::ENCODE_NEED_SWITCH => {
                     encoder.disable();
                     log::error!("switch due to encoder need switch");

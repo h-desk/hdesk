@@ -994,6 +994,30 @@ impl InvokeUiSession for FlutterHandler {
         );
     }
 
+    fn set_editable_focus(&self, hint: &EditableFocusHint) {
+        let rect_to_json = |
+            rect: &hbb_common::protobuf::MessageField<hbb_common::message_proto::RectI32>,
+        | {
+            rect.as_ref()
+                .map(|rect| vec![rect.x, rect.y, rect.width, rect.height])
+                .unwrap_or_else(|| vec![0, 0, 0, 0])
+        };
+        let event_data: Vec<(&str, serde_json::Value)> = vec![
+            ("editable", json!(hint.editable)),
+            ("caret", json!(rect_to_json(&hint.caret))),
+            ("editor", json!(rect_to_json(&hint.editor))),
+            ("window", json!(rect_to_json(&hint.window))),
+            ("pane", json!(rect_to_json(&hint.pane))),
+            ("display_idx", json!(hint.display_idx)),
+            (
+                "content_kind",
+                json!(hint.content_kind.enum_value_or_default() as i32),
+            ),
+            ("revision", json!(hint.revision)),
+        ];
+        self.push_event_("editable_focus_hint", &event_data, &[], &[]);
+    }
+
     fn on_connected(&self, _conn_type: ConnType) {}
 
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, link: &str, retry: bool) {

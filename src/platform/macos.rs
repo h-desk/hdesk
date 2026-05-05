@@ -10,8 +10,9 @@ use cocoa::{
 };
 use core_foundation::{
     array::{CFArrayGetCount, CFArrayGetValueAtIndex},
+    base::{CFTypeRef, TCFType},
     dictionary::CFDictionaryRef,
-    string::CFStringRef,
+    string::{CFString, CFStringRef},
 };
 use core_graphics::{
     display::{kCGNullWindowID, kCGWindowListOptionOnScreenOnly, CGWindowListCopyWindowInfo},
@@ -33,12 +34,20 @@ use std::{
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    ptr,
     sync::Mutex,
     time::{Duration, Instant},
 };
 
 // macOS boolean_t is defined as `int` in <mach/boolean.h>
 type BooleanT = hbb_common::libc::c_int;
+type AXUIElementRef = *const c_void;
+type AXValueRef = *const c_void;
+type AXError = i32;
+
+const AX_ERROR_SUCCESS: AXError = 0;
+const AX_VALUE_CGPOINT_TYPE: u32 = 1;
+const AX_VALUE_CGSIZE_TYPE: u32 = 2;
 
 static PRIVILEGES_SCRIPTS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/src/platform/privileges_scripts");
@@ -76,6 +85,15 @@ fn get_update_temp_dir_string() -> String {
 static CG_CURSOR_MUTEX: Mutex<()> = Mutex::new(());
 
 extern "C" {
+    fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementCopyAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        value: *mut CFTypeRef,
+    ) -> AXError;
+    fn AXValueGetType(value: AXValueRef) -> u32;
+    fn AXValueGetValue(value: AXValueRef, ax_type: u32, value_ptr: *mut c_void) -> u8;
+    fn CFBooleanGetValue(boolean: *const c_void) -> u8;
     fn CGSCurrentCursorSeed() -> i32;
     fn CGEventCreate(r: *const c_void) -> *const c_void;
     fn CGEventGetLocation(e: *const c_void) -> CGPoint;
@@ -137,8 +155,78 @@ pub fn get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFocus
     autoreleasepool(|| unsafe_get_editable_focus_hint(displays))
 }
 
+pub fn get_window_rect_for_point(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    autoreleasepool(|| unsafe_get_window_rect_for_point(x, y))
+}
+
 fn rect_has_area(rect: (i32, i32, i32, i32)) -> bool {
     rect.2 > 0 && rect.3 > 0
+}
+
+fn rect_area(rect: (i32, i32, i32, i32)) -> i64 {
+    (rect.2.max(0) as i64) * (rect.3.max(0) as i64)
+}
+
+fn rect_intersection(
+    left: (i32, i32, i32, i32),
+    right: (i32, i32, i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    let x1 = left.0.max(right.0);
+    let y1 = left.1.max(right.1);
+    let x2 = (left.0 + left.2).min(right.0 + right.2);
+    let y2 = (left.1 + left.3).min(right.1 + right.3);
+    let rect = (x1, y1, (x2 - x1).max(0), (y2 - y1).max(0));
+    rect_has_area(rect).then_some(rect)
+}
+
+fn rect_contains_rect_with_margin(
+    outer: (i32, i32, i32, i32),
+    inner: (i32, i32, i32, i32),
+    margin_x: i32,
+    margin_y: i32,
+) -> bool {
+    rect_has_area(outer)
+        && rect_has_area(inner)
+        && inner.0 >= outer.0 - margin_x
+        && inner.1 >= outer.1 - margin_y
+        && inner.0 + inner.2 <= outer.0 + outer.2 + margin_x
+        && inner.1 + inner.3 <= outer.1 + outer.3 + margin_y
+}
+
+fn pane_candidate_is_meaningful(
+    candidate: (i32, i32, i32, i32),
+    editor: (i32, i32, i32, i32),
+    window: (i32, i32, i32, i32),
+) -> bool {
+    if !rect_has_area(candidate) || !rect_has_area(editor) || !rect_has_area(window) {
+        return false;
+    }
+    if !rect_contains_rect_with_margin(candidate, editor, 64, 96) {
+        return false;
+    }
+
+    let candidate_area = rect_area(candidate);
+    let editor_area = rect_area(editor);
+    let window_area = rect_area(window).max(1);
+    if candidate_area <= editor_area + 4_000 {
+        return false;
+    }
+
+    let width_diff = (window.2 - candidate.2).abs();
+    let height_diff = (window.3 - candidate.3).abs();
+    let origin_diff = (window.0 - candidate.0).abs().max((window.1 - candidate.1).abs());
+    let meaningfully_smaller_than_window = width_diff >= 32 || height_diff >= 32 || origin_diff >= 24;
+    let window_area_ratio = candidate_area as f64 / window_area as f64;
+
+    meaningfully_smaller_than_window && window_area_ratio <= 0.9
+}
+
+fn point_in_rect(rect: (i32, i32, i32, i32), x: i32, y: i32) -> bool {
+    rect_has_area(rect)
+        && x >= rect.0
+        && x <= rect.0 + rect.2
+        && y >= rect.1
+        && y <= rect.1 + rect.3
 }
 
 fn rect_center(rect: (i32, i32, i32, i32)) -> Option<(i32, i32)> {
@@ -199,6 +287,398 @@ fn make_foreground_window_id(pid: i32, window_number: i32) -> isize {
     (((pid as i64) << 32) | (window_number as u32 as i64)) as isize
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct MacWindowCandidate {
+    rect: (i32, i32, i32, i32),
+    foreground_hwnd: isize,
+}
+
+fn inset_rect(rect: (i32, i32, i32, i32), inset_x: i32, inset_y: i32) -> Option<(i32, i32, i32, i32)> {
+    if !rect_has_area(rect) {
+        return None;
+    }
+
+    let inset_x = inset_x.min(rect.2.saturating_sub(1) / 2);
+    let inset_y = inset_y.min(rect.3.saturating_sub(1) / 2);
+    let inner = (
+        rect.0 + inset_x,
+        rect.1 + inset_y,
+        rect.2 - inset_x * 2,
+        rect.3 - inset_y * 2,
+    );
+    rect_has_area(inner).then_some(inner)
+}
+
+const AX_SYNTH_EDITOR_WIDTH: i32 = 240;
+const AX_SYNTH_EDITOR_HEIGHT: i32 = 40;
+
+fn synth_editor_rect_from_cursor(
+    window: (i32, i32, i32, i32),
+    cursor: (i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    if !rect_has_area(window) || !point_in_rect(window, cursor.0, cursor.1) {
+        return None;
+    }
+
+    let content = inset_rect(window, 8, 8)?;
+    let target_width = AX_SYNTH_EDITOR_WIDTH.min(content.2);
+    let target_height = AX_SYNTH_EDITOR_HEIGHT.min(content.3);
+    let max_left = content.0 + content.2 - target_width;
+    let max_top = content.1 + content.3 - target_height;
+
+    Some((
+        (cursor.0 - target_width / 2).clamp(content.0, max_left),
+        (cursor.1 - target_height / 2).clamp(content.1, max_top),
+        target_width,
+        target_height,
+    ))
+}
+
+fn choose_window_candidate(
+    candidates: &[MacWindowCandidate],
+    target: (i32, i32, i32, i32),
+) -> Option<MacWindowCandidate> {
+    if !rect_has_area(target) {
+        return None;
+    }
+
+    let target_center = rect_center(target);
+    candidates
+        .iter()
+        .copied()
+        .filter_map(|candidate| {
+            if !rect_has_area(candidate.rect) {
+                return None;
+            }
+            let center_match = target_center
+                .map(|(x, y)| point_in_rect(candidate.rect, x, y))
+                .unwrap_or(false);
+            let overlap = rect_intersection(candidate.rect, target)
+                .map(rect_area)
+                .unwrap_or(0);
+            if !center_match && overlap == 0 {
+                return None;
+            }
+
+            let origin_delta = (candidate.rect.0 - target.0).abs() as i64
+                + (candidate.rect.1 - target.1).abs() as i64;
+            let size_delta = (candidate.rect.2 - target.2).abs() as i64
+                + (candidate.rect.3 - target.3).abs() as i64;
+            Some((candidate, center_match, overlap, -origin_delta, -size_delta))
+        })
+        .max_by_key(|(_, center_match, overlap, origin_delta, size_delta)| {
+            (*center_match, *overlap, *origin_delta, *size_delta)
+        })
+        .map(|(candidate, _, _, _, _)| candidate)
+}
+
+fn find_window_candidate_containing_point(
+    candidates: &[MacWindowCandidate],
+    x: i32,
+    y: i32,
+) -> Option<MacWindowCandidate> {
+    candidates
+        .iter()
+        .copied()
+        .find(|candidate| point_in_rect(candidate.rect, x, y))
+}
+
+fn pane_candidate_role_rank(role: &str) -> i32 {
+    match role.to_ascii_lowercase().as_str() {
+        "axdocument" | "axwebarea" | "axscrollarea" => 3,
+        "axsplitgroup" | "axgroup" | "axlayoutarea" => 2,
+        _ => 1,
+    }
+}
+
+fn classify_ax_editable_role(
+    role: &str,
+    subrole: Option<&str>,
+    editable_attr: Option<bool>,
+) -> (bool, i32) {
+    let role = role.to_ascii_lowercase();
+    let subrole = subrole.unwrap_or_default().to_ascii_lowercase();
+    let code_like = role.contains("code")
+        || subrole.contains("code")
+        || subrole.contains("editor")
+        || subrole.contains("source");
+
+    if editable_attr == Some(false) {
+        return (false, 0);
+    }
+
+    if role == "axtextfield"
+        || role == "axsearchfield"
+        || role == "axcombobox"
+        || subrole.contains("secure")
+    {
+        return (true, 1);
+    }
+    if role == "axtextarea" {
+        return (true, if code_like { 3 } else { 2 });
+    }
+    if matches!(role.as_str(), "axdocument" | "axwebarea") && editable_attr == Some(true) {
+        return (true, if code_like || role == "axdocument" { 3 } else { 2 });
+    }
+    if editable_attr == Some(true) {
+        if code_like {
+            return (true, 3);
+        }
+        return (true, 2);
+    }
+    (false, 0)
+}
+
+unsafe fn ax_copy_attribute_value(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<CFTypeRef> {
+    if element.is_null() {
+        return None;
+    }
+    let attribute = CFString::new(attribute);
+    let mut value: CFTypeRef = ptr::null();
+    let err = AXUIElementCopyAttributeValue(
+        element,
+        attribute.as_concrete_TypeRef(),
+        &mut value,
+    );
+    if err == AX_ERROR_SUCCESS && !value.is_null() {
+        Some(value)
+    } else {
+        None
+    }
+}
+
+unsafe fn ax_copy_attribute_element(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<AXUIElementRef> {
+    ax_copy_attribute_value(element, attribute).map(|value| value as AXUIElementRef)
+}
+
+unsafe fn ax_copy_attribute_string(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<String> {
+    let value = ax_copy_attribute_value(element, attribute)?;
+    Some(CFString::wrap_under_create_rule(value as CFStringRef).to_string())
+}
+
+unsafe fn ax_copy_attribute_bool(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<bool> {
+    let value = ax_copy_attribute_value(element, attribute)?;
+    let enabled = CFBooleanGetValue(value as *const c_void) != 0;
+    CFRelease(value);
+    Some(enabled)
+}
+
+unsafe fn ax_copy_attribute_point(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<CGPoint> {
+    let value = ax_copy_attribute_value(element, attribute)?;
+    let mut point = CGPoint { x: 0.0, y: 0.0 };
+    let ok = AXValueGetType(value as AXValueRef) == AX_VALUE_CGPOINT_TYPE
+        && AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_CGPOINT_TYPE,
+            &mut point as *mut _ as *mut c_void,
+        )
+            != 0;
+    CFRelease(value);
+    ok.then_some(point)
+}
+
+unsafe fn ax_copy_attribute_size(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<NSSize> {
+    let value = ax_copy_attribute_value(element, attribute)?;
+    let mut size = NSSize {
+        width: 0.0,
+        height: 0.0,
+    };
+    let ok = AXValueGetType(value as AXValueRef) == AX_VALUE_CGSIZE_TYPE
+        && AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_CGSIZE_TYPE,
+            &mut size as *mut _ as *mut c_void,
+        )
+            != 0;
+    CFRelease(value);
+    ok.then_some(size)
+}
+
+unsafe fn ax_element_rect(element: AXUIElementRef) -> Option<(i32, i32, i32, i32)> {
+    let position = ax_copy_attribute_point(element, "AXPosition")?;
+    let size = ax_copy_attribute_size(element, "AXSize")?;
+    let rect = (
+        position.x.round() as i32,
+        position.y.round() as i32,
+        size.width.round() as i32,
+        size.height.round() as i32,
+    );
+    rect_has_area(rect).then_some(rect)
+}
+
+unsafe fn ax_pick_pane_rect(
+    element: AXUIElementRef,
+    editor: (i32, i32, i32, i32),
+    window: (i32, i32, i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    let mut best: Option<((i32, i32, i32, i32), i32)> = None;
+    let mut current = ax_copy_attribute_element(element, "AXParent")?;
+
+    for _ in 0..6 {
+        if let Some(candidate) = ax_element_rect(current)
+            .and_then(|rect| rect_intersection(rect, window))
+            .filter(|rect| pane_candidate_is_meaningful(*rect, editor, window))
+        {
+            let role = ax_copy_attribute_string(current, "AXRole").unwrap_or_default();
+            let rank = pane_candidate_role_rank(&role);
+            if best
+                .map(|(previous, previous_rank)| {
+                    rank > previous_rank
+                        || (rank == previous_rank && rect_area(candidate) < rect_area(previous))
+                })
+                .unwrap_or(true)
+            {
+                best = Some((candidate, rank));
+            }
+        }
+
+        let next = ax_copy_attribute_element(current, "AXParent");
+        CFRelease(current as *const c_void);
+        let Some(next) = next else {
+            return best.map(|(rect, _)| rect);
+        };
+        current = next;
+    }
+
+    CFRelease(current as *const c_void);
+    best.map(|(rect, _)| rect)
+}
+
+unsafe fn resolve_ax_window_candidate(
+    app: AXUIElementRef,
+    focused_element: AXUIElementRef,
+    cg_windows: &[MacWindowCandidate],
+) -> Option<MacWindowCandidate> {
+    for (owner, attribute) in [
+        (focused_element, "AXWindow"),
+        (focused_element, "AXTopLevelUIElement"),
+        (app, "AXFocusedWindow"),
+        (app, "AXMainWindow"),
+    ] {
+        let Some(window_element) = ax_copy_attribute_element(owner, attribute) else {
+            continue;
+        };
+        let target_rect = ax_element_rect(window_element);
+        CFRelease(window_element as *const c_void);
+        if let Some(candidate) = target_rect.and_then(|rect| choose_window_candidate(cg_windows, rect)) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+struct AxFocusBuildResult {
+    window: MacWindowCandidate,
+    editable_hint: Option<EditableFocusHintInfo>,
+}
+
+unsafe fn build_ax_editable_focus_hint(
+    displays: &[DisplayInfo],
+    frontmost_pid: i32,
+    cg_windows: &[MacWindowCandidate],
+    fallback_window: MacWindowCandidate,
+) -> Option<AxFocusBuildResult> {
+    if !is_process_trusted(false) {
+        return None;
+    }
+
+    let app = AXUIElementCreateApplication(frontmost_pid);
+    if app.is_null() {
+        return None;
+    }
+
+    let focused_element = ax_copy_attribute_element(app, "AXFocusedUIElement");
+    let Some(focused_element) = focused_element else {
+        CFRelease(app as *const c_void);
+        return None;
+    };
+
+    let resolved_window = resolve_ax_window_candidate(app, focused_element, cg_windows)
+        .unwrap_or(fallback_window);
+    let window = resolved_window.rect;
+
+    let role = ax_copy_attribute_string(focused_element, "AXRole").unwrap_or_default();
+    let subrole = ax_copy_attribute_string(focused_element, "AXSubrole");
+    let editable_attr = ax_copy_attribute_bool(focused_element, "AXEditable");
+    let (editable, content_kind) =
+        classify_ax_editable_role(&role, subrole.as_deref(), editable_attr);
+
+    if !editable {
+        CFRelease(focused_element as *const c_void);
+        CFRelease(app as *const c_void);
+        return Some(AxFocusBuildResult {
+            window: resolved_window,
+            editable_hint: None,
+        });
+    }
+
+    let editor = ax_element_rect(focused_element)
+        .and_then(|rect| rect_intersection(rect, window))
+        .or_else(|| {
+            get_cursor_pos()
+                .filter(|(x, y)| point_in_rect(window, *x, *y))
+                .and_then(|cursor| synth_editor_rect_from_cursor(window, cursor))
+        });
+    let pane = editor.and_then(|editor_rect| ax_pick_pane_rect(focused_element, editor_rect, window));
+    CFRelease(focused_element as *const c_void);
+    CFRelease(app as *const c_void);
+
+    let Some(editor) = editor else {
+        return Some(AxFocusBuildResult {
+            window: resolved_window,
+            editable_hint: None,
+        });
+    };
+    let pane = pane.unwrap_or(window);
+
+    log::debug!(
+        "editable_focus macOS AX hit: role={} subrole={:?} editable_attr={:?} kind={} editor={:?} pane={:?} window={:?}",
+        role,
+        subrole,
+        editable_attr,
+        content_kind,
+        editor,
+        pane,
+        window,
+    );
+
+    Some(AxFocusBuildResult {
+        window: resolved_window,
+        editable_hint: Some(normalize_editable_focus_hint_to_display(
+            displays,
+            EditableFocusHintInfo {
+                editable: true,
+                caret: (0, 0, 0, 0),
+                editor,
+                window,
+                pane,
+                display_idx: 0,
+                content_kind,
+                foreground_hwnd: resolved_window.foreground_hwnd,
+            },
+        )),
+    })
+}
+
 unsafe fn get_frontmost_pid() -> Option<i32> {
     let workspace: id = msg_send![class!(NSWorkspace), sharedWorkspace];
     if workspace == nil {
@@ -213,8 +693,8 @@ unsafe fn get_frontmost_pid() -> Option<i32> {
 }
 
 unsafe fn number_value(dict: id, key: &str) -> Option<f64> {
-    let key: id = NSString::alloc(nil).init_str(key);
-    let value: id = msg_send![dict, objectForKey: key];
+    let key = CFString::new(key);
+    let value: id = msg_send![dict, objectForKey: key.as_concrete_TypeRef() as id];
     if value == nil {
         return None;
     }
@@ -239,55 +719,73 @@ unsafe fn read_window_bounds(bounds_dict: id) -> Option<(i32, i32, i32, i32)> {
     rect_has_area(rect).then_some(rect)
 }
 
-unsafe fn find_frontmost_window(frontmost_pid: i32) -> Option<((i32, i32, i32, i32), isize)> {
+unsafe fn list_frontmost_windows(frontmost_pid: i32) -> Vec<MacWindowCandidate> {
     let window_list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
     if window_list.is_null() {
-        return None;
+        return Vec::new();
     }
 
-    let layer_key: id = NSString::alloc(nil).init_str("kCGWindowLayer");
-    let bounds_key: id = NSString::alloc(nil).init_str("kCGWindowBounds");
-    let window_number_key: id = NSString::alloc(nil).init_str("kCGWindowNumber");
-    let count = CFArrayGetCount(window_list);
-    for idx in 0..count {
-        let window: id = CFArrayGetValueAtIndex(window_list, idx) as _;
-        if window == nil {
-            continue;
-        }
+    let result = {
+        let layer_key = CFString::new("kCGWindowLayer");
+        let bounds_key = CFString::new("kCGWindowBounds");
+        let window_number_key = CFString::new("kCGWindowNumber");
+        let count = CFArrayGetCount(window_list);
+        let mut windows = Vec::new();
 
-        let pid_value: id = msg_send![window, valueForKey: kCGWindowOwnerPID as id];
-        if pid_value == nil {
-            continue;
-        }
-        let owner_pid: i32 = msg_send![pid_value, intValue];
-        if owner_pid != frontmost_pid {
-            continue;
-        }
-
-        let layer_value: id = msg_send![window, objectForKey: layer_key];
-        if layer_value != nil {
-            let layer: i32 = msg_send![layer_value, intValue];
-            if layer != 0 {
+        for idx in 0..count {
+            let window: id = CFArrayGetValueAtIndex(window_list, idx) as _;
+            if window == nil {
                 continue;
             }
+
+            let pid_value: id = msg_send![window, valueForKey: kCGWindowOwnerPID as id];
+            if pid_value == nil {
+                continue;
+            }
+            let owner_pid: i32 = msg_send![pid_value, intValue];
+            if owner_pid != frontmost_pid {
+                continue;
+            }
+
+            let layer_value: id = msg_send![window, objectForKey: layer_key.as_concrete_TypeRef() as id];
+            if layer_value != nil {
+                let layer: i32 = msg_send![layer_value, intValue];
+                if layer != 0 {
+                    continue;
+                }
+            }
+
+            let bounds_value: id = msg_send![window, objectForKey: bounds_key.as_concrete_TypeRef() as id];
+            let Some(window_rect) = read_window_bounds(bounds_value) else {
+                continue;
+            };
+
+            let window_number_value: id = msg_send![window, objectForKey: window_number_key.as_concrete_TypeRef() as id];
+            let window_number: i32 = if window_number_value == nil {
+                0
+            } else {
+                msg_send![window_number_value, intValue]
+            };
+
+            windows.push(MacWindowCandidate {
+                rect: window_rect,
+                foreground_hwnd: make_foreground_window_id(owner_pid, window_number),
+            });
         }
 
-        let bounds_value: id = msg_send![window, objectForKey: bounds_key];
-        let Some(window_rect) = read_window_bounds(bounds_value) else {
-            continue;
-        };
+        windows
+    };
 
-        let window_number_value: id = msg_send![window, objectForKey: window_number_key];
-        let window_number: i32 = if window_number_value == nil {
-            0
-        } else {
-            msg_send![window_number_value, intValue]
-        };
+    CFRelease(window_list as *const c_void);
+    result
+}
 
-        return Some((window_rect, make_foreground_window_id(owner_pid, window_number)));
-    }
-
-    None
+fn unsafe_get_window_rect_for_point(x: i32, y: i32) -> Option<(i32, i32, i32, i32)> {
+    let frontmost_pid = unsafe { get_frontmost_pid() }?;
+    let cg_windows = unsafe { list_frontmost_windows(frontmost_pid) };
+    find_window_candidate_containing_point(&cg_windows, x, y)
+        .or_else(|| cg_windows.first().copied())
+        .map(|window| window.rect)
 }
 
 fn fallback_window_hint(displays: &[DisplayInfo], frontmost_pid: i32) -> Option<EditableFocusHintInfo> {
@@ -311,23 +809,166 @@ fn fallback_window_hint(displays: &[DisplayInfo], frontmost_pid: i32) -> Option<
 
 fn unsafe_get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFocusHintInfo> {
     let frontmost_pid = unsafe { get_frontmost_pid() }?;
-    if let Some((window, foreground_hwnd)) = unsafe { find_frontmost_window(frontmost_pid) } {
+    let cg_windows = unsafe { list_frontmost_windows(frontmost_pid) };
+    if let Some(fallback_window) = cg_windows.first().copied() {
+        if let Some(ax_result) = unsafe {
+            build_ax_editable_focus_hint(displays, frontmost_pid, &cg_windows, fallback_window)
+        } {
+            if let Some(editable_hint) = ax_result.editable_hint {
+                return Some(editable_hint);
+            }
+            return Some(normalize_editable_focus_hint_to_display(
+                displays,
+                EditableFocusHintInfo {
+                    editable: false,
+                    caret: (0, 0, 0, 0),
+                    editor: (0, 0, 0, 0),
+                    window: ax_result.window.rect,
+                    pane: ax_result.window.rect,
+                    display_idx: 0,
+                    content_kind: 0,
+                    foreground_hwnd: ax_result.window.foreground_hwnd,
+                },
+            ));
+        }
         return Some(normalize_editable_focus_hint_to_display(
             displays,
             EditableFocusHintInfo {
                 editable: false,
                 caret: (0, 0, 0, 0),
                 editor: (0, 0, 0, 0),
-                window,
-                pane: window,
+                window: fallback_window.rect,
+                pane: fallback_window.rect,
                 display_idx: 0,
                 content_kind: 0,
-                foreground_hwnd,
+                foreground_hwnd: fallback_window.foreground_hwnd,
             },
         ));
     }
 
     fallback_window_hint(displays, frontmost_pid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        choose_window_candidate, classify_ax_editable_role,
+        find_window_candidate_containing_point, pane_candidate_is_meaningful,
+        synth_editor_rect_from_cursor, MacWindowCandidate,
+    };
+
+    #[test]
+    fn classify_text_field_as_single_line() {
+        assert_eq!(classify_ax_editable_role("AXTextField", None, None), (true, 1));
+    }
+
+    #[test]
+    fn classify_text_area_as_multi_line() {
+        assert_eq!(classify_ax_editable_role("AXTextArea", None, None), (true, 2));
+    }
+
+    #[test]
+    fn classify_explicitly_editable_web_area_as_multi_line() {
+        assert_eq!(
+            classify_ax_editable_role("AXWebArea", None, Some(true)),
+            (true, 2)
+        );
+    }
+
+    #[test]
+    fn read_only_text_field_is_not_editable() {
+        assert_eq!(
+            classify_ax_editable_role("AXTextField", None, Some(false)),
+            (false, 0)
+        );
+    }
+
+    #[test]
+    fn editable_document_is_classified_as_code() {
+        assert_eq!(
+            classify_ax_editable_role("AXDocument", Some("AXSourceEditor"), Some(true)),
+            (true, 3)
+        );
+    }
+
+    #[test]
+    fn keep_noneditable_group_closed() {
+        assert_eq!(classify_ax_editable_role("AXGroup", None, None), (false, 0));
+    }
+
+    #[test]
+    fn reject_window_sized_pane_candidate() {
+        assert!(!pane_candidate_is_meaningful(
+            (0, 0, 1200, 900),
+            (100, 700, 320, 40),
+            (0, 0, 1200, 900)
+        ));
+    }
+
+    #[test]
+    fn accept_meaningful_nested_pane_candidate() {
+        assert!(pane_candidate_is_meaningful(
+            (40, 80, 860, 620),
+            (120, 540, 360, 44),
+            (0, 0, 1200, 900)
+        ));
+    }
+
+    #[test]
+    fn synth_editor_rect_stays_inside_window() {
+        let rect = synth_editor_rect_from_cursor((0, 0, 1200, 900), (1180, 880)).unwrap();
+        assert!(rect.0 >= 8);
+        assert!(rect.1 >= 8);
+        assert!(rect.0 + rect.2 <= 1192);
+        assert!(rect.1 + rect.3 <= 892);
+    }
+
+    #[test]
+    fn synth_editor_rect_clamps_inside_tiny_window() {
+        let window = (40, 70, 42, 18);
+        let rect = synth_editor_rect_from_cursor(window, (78, 84)).unwrap();
+
+        assert!(rect.0 >= window.0);
+        assert!(rect.1 >= window.1);
+        assert!(rect.0 + rect.2 <= window.0 + window.2);
+        assert!(rect.1 + rect.3 <= window.1 + window.3);
+        assert!(rect.2 <= 26);
+        assert!(rect.3 <= 2);
+    }
+
+    #[test]
+    fn choose_window_candidate_prefers_matching_focus_window() {
+        let candidates = [
+            MacWindowCandidate {
+                rect: (0, 0, 640, 480),
+                foreground_hwnd: 1001,
+            },
+            MacWindowCandidate {
+                rect: (720, 40, 900, 720),
+                foreground_hwnd: 2002,
+            },
+        ];
+
+        let chosen = choose_window_candidate(&candidates, (780, 120, 420, 320)).unwrap();
+        assert_eq!(chosen.foreground_hwnd, 2002);
+    }
+
+    #[test]
+    fn window_point_anchor_picks_topmost_hit() {
+        let candidates = [
+            MacWindowCandidate {
+                rect: (0, 0, 1280, 820),
+                foreground_hwnd: 3003,
+            },
+            MacWindowCandidate {
+                rect: (160, 120, 520, 360),
+                foreground_hwnd: 4004,
+            },
+        ];
+
+        let chosen = find_window_candidate_containing_point(&candidates, 320, 260).unwrap();
+        assert_eq!(chosen.foreground_hwnd, 3003);
+    }
 }
 
 // macOS >= 10.15

@@ -1934,6 +1934,9 @@ impl<T: InvokeUiSession> Remote<T> {
                     Some(misc::Union::FollowCurrentDisplay(d_idx)) => {
                         self.handler.set_current_display(d_idx);
                     }
+                    Some(misc::Union::EditableFocusHint(hint)) => {
+                        self.handler.set_editable_focus(&hint);
+                    }
                     _ => {}
                 },
                 Some(message::Union::TestDelay(t)) => {

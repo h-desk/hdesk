@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -66,6 +67,8 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   Orientation? _currentOrientation;
   final _uniqueKey = UniqueKey();
   Timer? _iosKeyboardWorkaroundTimer;
+  Timer? _metricsTimer;
+  double _viewInsetsBottom = 0.0;
 
   final _blockableOverlayState = BlockableOverlayState();
 
@@ -74,6 +77,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   final FocusNode _mobileFocusNode = FocusNode();
   final FocusNode _physicalFocusNode = FocusNode();
   var _showEdit = false; // use soft keyboard
+  int _lastEditableFocusAutoKeyboardSeq = 0;
 
   InputModel get inputModel => gFFI.inputModel;
   SessionID get sessionId => gFFI.sessionId;
@@ -90,6 +94,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    gFFI.ffiModel.addListener(_handleEditableFocusModelChanged);
     gFFI.ffiModel.updateEventListener(sessionId, widget.id);
     gFFI.start(
       widget.id,
@@ -126,6 +131,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   @override
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    gFFI.ffiModel.removeListener(_handleEditableFocusModelChanged);
     // https://github.com/flutter/flutter/issues/64935
     super.dispose();
     gFFI.dialogManager.hideMobileActionsOverlay(store: false);
@@ -138,6 +144,7 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
     await gFFI.close();
     _timer?.cancel();
     _iosKeyboardWorkaroundTimer?.cancel();
+    _metricsTimer?.cancel();
     gFFI.dialogManager.dismissAll();
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
         overlays: SystemUiOverlay.values);
@@ -161,6 +168,43 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
   // When swithing from other app to this app, try to sync clipboard.
   void trySyncClipboard() {
     gFFI.invokeMethod("try_sync_clipboard");
+  }
+
+  void _handleEditableFocusModelChanged() {
+    if (!mounted) {
+      return;
+    }
+    final seq = gFFI.ffiModel.editableFocusAutoKeyboardSeq;
+    if (seq == 0 || seq == _lastEditableFocusAutoKeyboardSeq) {
+      return;
+    }
+    _lastEditableFocusAutoKeyboardSeq = seq;
+    if (keyboardVisibilityController.isVisible) {
+      gFFI.canvasModel.applyMobileEditableFocusViewport(force: true);
+      return;
+    }
+    if (_showEdit) {
+      return;
+    }
+    openKeyboard();
+  }
+
+  @override
+  void didChangeMetrics() {
+    final newBottom = MediaQueryData.fromView(ui.window).viewInsets.bottom;
+    _metricsTimer?.cancel();
+    _metricsTimer = Timer(Duration(milliseconds: 100), () {
+      if (!mounted || newBottom == _viewInsetsBottom) {
+        return;
+      }
+      final handled = gFFI.canvasModel.applyMobileEditableFocusViewport();
+      if (!handled &&
+          !(gFFI.cursorModel.lastKeyboardIsVisible &&
+              gFFI.canvasModel.isMobileCanvasChanged)) {
+        gFFI.canvasModel.mobileFocusCanvasCursor();
+      }
+      _viewInsetsBottom = newBottom;
+    });
   }
 
   // to-do: It should be better to use transparent color instead of the bgColor.
@@ -207,6 +251,10 @@ class _RemotePageState extends State<RemotePage> with WidgetsBindingObserver {
         SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
             overlays: SystemUiOverlay.values);
         _mobileFocusNode.requestFocus();
+        final handled = gFFI.canvasModel.applyMobileEditableFocusViewport();
+        if (!handled) {
+          gFFI.canvasModel.mobileFocusCanvasCursor();
+        }
       });
     }
     // update for Scaffold

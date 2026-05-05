@@ -449,7 +449,7 @@ pub const NAME_EDITABLE_FOCUS: &'static str = "editable_focus";
 #[derive(Clone, PartialEq, Default)]
 struct StateEditableFocus {
     last_hint: Option<crate::platform::EditableFocusHintInfo>,
-    last_editable_hint: Option<crate::platform::EditableFocusHintInfo>,
+    last_editable_hint: Option<RecentEditableHint>,
     recent_editable_hints: Vec<RecentEditableHint>,
     revision: u64,
     // idle_counter drives adaptive polling (active vs. idle)
@@ -614,6 +614,10 @@ fn remember_recent_editable_hint(
         return;
     }
     let now = Instant::now();
+    state.last_editable_hint = Some(RecentEditableHint {
+        hint: hint.clone(),
+        updated_at: now,
+    });
     if let Some(existing) = state
         .recent_editable_hints
         .iter_mut()
@@ -635,14 +639,18 @@ fn find_recent_editable_hint_for_window(
     window: (i32, i32, i32, i32),
 ) -> Option<(crate::platform::EditableFocusHintInfo, &'static str, u128)> {
     if let Some(last_editable_hint) = state.last_editable_hint.as_ref() {
-        if editable_windows_match(last_editable_hint.window, window) {
-            return Some((last_editable_hint.clone(), "last", 0));
+        let age = last_editable_hint.updated_at.elapsed();
+        if age <= Duration::from_millis(RECENT_EDITABLE_HINT_TTL_MS)
+            && editable_windows_match(last_editable_hint.hint.window, window)
+        {
+            return Some((last_editable_hint.hint.clone(), "last", age.as_millis()));
         }
     }
 
     state
         .recent_editable_hints
         .iter()
+        .filter(|entry| entry.updated_at.elapsed() <= Duration::from_millis(RECENT_EDITABLE_HINT_TTL_MS))
         .filter(|entry| editable_windows_match(entry.hint.window, window))
         .min_by_key(|entry| entry.updated_at.elapsed())
         .map(|entry| (entry.hint.clone(), "cache", entry.updated_at.elapsed().as_millis()))
@@ -666,10 +674,22 @@ fn is_left_mouse_down(evt: &MouseEvent) -> bool {
     (evt.mask & MOUSE_TYPE_MASK) == MOUSE_TYPE_DOWN && (evt.mask >> 3) == MOUSE_BUTTON_LEFT
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
+fn get_recent_editable_click_window(evt: &MouseEvent) -> Option<(i32, i32, i32, i32)> {
+    #[cfg(windows)]
+    {
+        crate::platform::windows::get_foreground_window_rect()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::platform::macos::get_window_rect_for_point(evt.x, evt.y)
+    }
+}
+
+#[cfg(any(windows, target_os = "macos"))]
 fn record_recent_editable_click_intent(evt: &MouseEvent, conn: i32, simulate: bool) {
     let seq = NEXT_EDITABLE_CLICK_SEQ.fetch_add(1, Ordering::Relaxed);
-    if let Some(window) = crate::platform::windows::get_foreground_window_rect() {
+    if let Some(window) = get_recent_editable_click_window(evt) {
         *RECENT_EDITABLE_CLICK_INTENT.lock().unwrap() = Some(EditableClickIntent {
             seq,
             window,
@@ -702,6 +722,16 @@ impl super::service::Reset for StateEditableFocus {
     fn reset(&mut self) {
         *self = Default::default();
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_editable_focus_poll_due(active: bool, idle_counter: u32) -> bool {
+    active || idle_counter % 3 == 0
+}
+
+#[cfg(target_os = "macos")]
+fn macos_editable_focus_refresh_due(idle_counter: u32) -> bool {
+    idle_counter % 5 == 0
 }
 
 pub fn new_editable_focus() -> GenericService {
@@ -761,8 +791,13 @@ fn window_rect_changed(
 
 #[cfg(test)]
 mod tests {
-    use super::hint_changed;
+    use super::{
+        build_proxy_bottom_band, find_recent_editable_hint_for_window, hint_changed,
+        proxy_hit_test, remember_recent_editable_hint, resolve_proxy_anchor_window,
+        prune_recent_editable_hints, StateEditableFocus, RECENT_EDITABLE_HINT_TTL_MS,
+    };
     use crate::platform::EditableFocusHintInfo;
+    use std::time::{Duration, Instant};
 
     fn make_hint(
         editable: bool,
@@ -803,6 +838,55 @@ mod tests {
         let next = make_hint(false, (-9, -9, 1938, 1158), 5005);
 
         assert!(!hint_changed(&Some(prev), &next));
+    }
+
+    #[test]
+    fn proxy_hit_test_reports_editor_and_band_hits() {
+        let hint = make_hint(true, (0, 0, 1400, 960), 6006);
+        let (_, hit_editor, hit_band) = proxy_hit_test(&hint, 520, 920);
+        assert!(hit_editor);
+        assert!(hit_band);
+
+        let band = build_proxy_bottom_band(&hint).unwrap();
+        let band_only_y = (hint.editor.1 + hint.editor.3 + 32).min(band.1 + band.3 - 12);
+        let (_, hit_editor, hit_band) = proxy_hit_test(&hint, 520, band_only_y);
+        assert!(!hit_editor);
+        assert!(hit_band);
+    }
+
+    #[test]
+    fn resolve_proxy_anchor_window_prefers_hint_then_intent() {
+        let hint_window = (10, 20, 1280, 800);
+        let intent_window = (40, 60, 900, 640);
+
+        assert_eq!(
+            resolve_proxy_anchor_window(hint_window, intent_window),
+            Some((hint_window, "hint"))
+        );
+        assert_eq!(
+            resolve_proxy_anchor_window((0, 0, 0, 0), intent_window),
+            Some((intent_window, "intent"))
+        );
+    }
+
+    #[test]
+    fn recent_editable_hint_lookup_respects_ttl() {
+        let mut state = StateEditableFocus::default();
+        let hint = make_hint(true, (20, 30, 1200, 860), 7007);
+        remember_recent_editable_hint(&mut state, &hint);
+
+        let (found, source, _) =
+            find_recent_editable_hint_for_window(&state, (24, 34, 1204, 864)).unwrap();
+        assert_eq!(source, "last");
+        assert_eq!(found.window, hint.window);
+
+        state.last_editable_hint.as_mut().unwrap().updated_at =
+            Instant::now() - Duration::from_millis(RECENT_EDITABLE_HINT_TTL_MS + 10);
+        state.recent_editable_hints[0].updated_at =
+            Instant::now() - Duration::from_millis(RECENT_EDITABLE_HINT_TTL_MS + 10);
+        prune_recent_editable_hints(&mut state);
+
+        assert!(find_recent_editable_hint_for_window(&state, hint.window).is_none());
     }
 }
 
@@ -1065,7 +1149,6 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
 
     state.idle_counter = 0;
     if hint_info.editable {
-        state.last_editable_hint = Some(hint_info.clone());
         remember_recent_editable_hint(state, &hint_info);
     }
     state.last_hint = Some(hint_info.clone());
@@ -1076,20 +1159,175 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
 
 #[cfg(target_os = "macos")]
 fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus) -> ResultType<()> {
-    // V1 for macOS only reports frontmost-window changes. Poll more slowly while
-    // idle because there is no editable-state tracking or click-proxy reuse yet.
+    // macOS keeps the implementation intentionally narrow: poll the platform AX
+    // focus hint and refresh unchanged editable hints periodically so mobile can
+    // reopen IME for the same field without requiring a focus geometry change.
     state.idle_counter = state.idle_counter.saturating_add(1);
-    if state.idle_counter % 3 != 0 {
+    prune_recent_editable_hints(state);
+    let recent_click_intent = take_recent_editable_click_intent();
+    let active = state.last_hint.as_ref().map(|hint| hint.editable).unwrap_or(false);
+    if !macos_editable_focus_poll_due(active || recent_click_intent.is_some(), state.idle_counter) {
         return Ok(());
     }
 
     let displays = super::display_service::get_sync_displays();
-    let hint_info = match crate::platform::get_editable_focus_hint(&displays) {
+    let mut hint_info = match crate::platform::get_editable_focus_hint(&displays) {
         Some(h) => h,
         None => return Ok(()),
     };
 
+    if !hint_info.editable {
+        if let Some(intent) = recent_click_intent.as_ref() {
+            if let Some((anchor_window, anchor_source)) =
+                resolve_proxy_anchor_window(hint_info.window, intent.window)
+            {
+                if let Some((candidate_hint, candidate_source, candidate_age_ms)) =
+                    find_recent_editable_hint_for_window(state, anchor_window)
+                {
+                    let current_window_match = editable_windows_match(intent.window, anchor_window);
+                    let candidate_window_match =
+                        editable_windows_match(candidate_hint.window, anchor_window);
+                    let (proxy_band, hit_editor, hit_band) =
+                        proxy_hit_test(&candidate_hint, intent.x, intent.y);
+                    if current_window_match && candidate_window_match && hit_editor {
+                        log::debug!(
+                            "editable_focus macOS proxy reuse: seq={} anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?}",
+                            intent.seq,
+                            anchor_source,
+                            candidate_source,
+                            candidate_age_ms,
+                            intent.x,
+                            intent.y,
+                            hint_info.window,
+                            anchor_window,
+                            candidate_hint.window,
+                            candidate_hint.editor,
+                            candidate_hint.pane,
+                            proxy_band,
+                        );
+                        hint_info = candidate_hint;
+                    } else if hint_changed(&state.last_hint, &hint_info) {
+                        log::debug!(
+                            "editable_focus macOS proxy miss: seq={} anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?} match_current={} match_last={} hit_editor={} hit_band={}",
+                            intent.seq,
+                            anchor_source,
+                            candidate_source,
+                            candidate_age_ms,
+                            intent.x,
+                            intent.y,
+                            hint_info.window,
+                            anchor_window,
+                            candidate_hint.window,
+                            candidate_hint.editor,
+                            candidate_hint.pane,
+                            proxy_band,
+                            current_window_match,
+                            candidate_window_match,
+                            hit_editor,
+                            hit_band,
+                        );
+                    }
+                } else if hint_changed(&state.last_hint, &hint_info) {
+                    log::debug!(
+                        "editable_focus macOS proxy miss: seq={} anchor={} source=none point=({}, {}) current_window={:?} anchor_window={:?} reason=no-candidate",
+                        intent.seq,
+                        anchor_source,
+                        intent.x,
+                        intent.y,
+                        hint_info.window,
+                        anchor_window,
+                    );
+                }
+            } else if hint_changed(&state.last_hint, &hint_info) {
+                log::debug!(
+                    "editable_focus macOS proxy miss: seq={} source=none point=({}, {}) current_window={:?} intent_window={:?} reason=no-window-anchor",
+                    intent.seq,
+                    intent.x,
+                    intent.y,
+                    hint_info.window,
+                    intent.window,
+                );
+            }
+        } else if let Some((cursor_x, cursor_y)) = crate::get_cursor_pos() {
+            let cursor_window = crate::platform::macos::get_window_rect_for_point(cursor_x, cursor_y)
+                .unwrap_or(hint_info.window);
+            if let Some((anchor_window, anchor_source)) =
+                resolve_proxy_anchor_window(hint_info.window, cursor_window)
+            {
+                if let Some((candidate_hint, candidate_source, candidate_age_ms)) =
+                    find_recent_editable_hint_for_window(state, anchor_window)
+                {
+                    let candidate_window_match =
+                        editable_windows_match(candidate_hint.window, anchor_window);
+                    let cursor_window_match = editable_windows_match(cursor_window, anchor_window);
+                    let (proxy_band, hit_editor, hit_band) =
+                        proxy_hit_test(&candidate_hint, cursor_x, cursor_y);
+                    if cursor_window_match && candidate_window_match && hit_editor {
+                        log::debug!(
+                            "editable_focus macOS cursor proxy reuse: anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?}",
+                            anchor_source,
+                            candidate_source,
+                            candidate_age_ms,
+                            cursor_x,
+                            cursor_y,
+                            hint_info.window,
+                            anchor_window,
+                            candidate_hint.window,
+                            candidate_hint.editor,
+                            candidate_hint.pane,
+                            proxy_band,
+                        );
+                        hint_info = candidate_hint;
+                    } else if hint_changed(&state.last_hint, &hint_info) {
+                        log::debug!(
+                            "editable_focus macOS cursor proxy miss: anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?} match_cursor={} match_last={} hit_editor={} hit_band={}",
+                            anchor_source,
+                            candidate_source,
+                            candidate_age_ms,
+                            cursor_x,
+                            cursor_y,
+                            hint_info.window,
+                            anchor_window,
+                            candidate_hint.window,
+                            candidate_hint.editor,
+                            candidate_hint.pane,
+                            proxy_band,
+                            cursor_window_match,
+                            candidate_window_match,
+                            hit_editor,
+                            hit_band,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(intent) = recent_click_intent.as_ref() {
+        if state.last_observed_click_seq != intent.seq {
+            log::info!(
+                "editable_focus macOS post-click observe: seq={} age_ms={} editable={} kind={} window={:?} editor={:?} pane={:?}",
+                intent.seq,
+                intent.created_at.elapsed().as_millis(),
+                hint_info.editable,
+                hint_info.content_kind,
+                hint_info.window,
+                hint_info.editor,
+                hint_info.pane,
+            );
+            state.last_observed_click_seq = intent.seq;
+        }
+    }
+
     if !hint_changed(&state.last_hint, &hint_info) {
+        if hint_info.editable && macos_editable_focus_refresh_due(state.idle_counter) {
+            log::debug!(
+                "editable_focus REFRESH: editable=true, kind={}, rev={}",
+                hint_info.content_kind,
+                state.revision + 1
+            );
+            send_editable_focus_hint(&sp, state, &hint_info);
+        }
         return Ok(());
     }
 
@@ -1104,6 +1342,9 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
     );
 
     state.idle_counter = 0;
+    if hint_info.editable {
+        remember_recent_editable_hint(state, &hint_info);
+    }
     state.last_hint = Some(hint_info.clone());
     send_editable_focus_hint(&sp, state, &hint_info);
 
@@ -1114,6 +1355,36 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
 fn run_editable_focus(_sp: EmptyExtraFieldService, _state: &mut StateEditableFocus) -> ResultType<()> {
     // Only implemented for Windows in v1
     Ok(())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_editable_focus_tests {
+    use super::{macos_editable_focus_poll_due, macos_editable_focus_refresh_due};
+
+    #[test]
+    fn active_focus_polls_every_tick() {
+        for tick in 1..=6 {
+            assert!(macos_editable_focus_poll_due(true, tick));
+        }
+    }
+
+    #[test]
+    fn idle_focus_polls_every_third_tick() {
+        assert!(!macos_editable_focus_poll_due(false, 1));
+        assert!(!macos_editable_focus_poll_due(false, 2));
+        assert!(macos_editable_focus_poll_due(false, 3));
+        assert!(!macos_editable_focus_poll_due(false, 4));
+        assert!(!macos_editable_focus_poll_due(false, 5));
+        assert!(macos_editable_focus_poll_due(false, 6));
+    }
+
+    #[test]
+    fn refresh_due_every_five_ticks() {
+        assert!(!macos_editable_focus_refresh_due(1));
+        assert!(!macos_editable_focus_refresh_due(4));
+        assert!(macos_editable_focus_refresh_due(5));
+        assert!(macos_editable_focus_refresh_due(10));
+    }
 }
 
 
@@ -1428,7 +1699,12 @@ pub fn handle_mouse(
     {
         // having GUI (--server has tray, it is GUI too), run main GUI thread, otherwise crash
         let evt = evt.clone();
-        QUEUE.exec_async(move || handle_mouse_(&evt, conn, username, argb, simulate, show_cursor));
+        QUEUE.exec_async(move || {
+            if is_left_mouse_down(&evt) {
+                record_recent_editable_click_intent(&evt, conn, simulate);
+            }
+            handle_mouse_(&evt, conn, username, argb, simulate, show_cursor)
+        });
         return;
     }
     #[cfg(windows)]

@@ -1717,6 +1717,7 @@ pub trait InvokeUiSession: Send + Sync + Clone + 'static + Sized + Default {
     fn on_texture(&self, display: usize, texture: *mut c_void);
     fn set_multiple_windows_session(&self, sessions: Vec<WindowsSession>);
     fn set_current_display(&self, disp_idx: i32);
+    fn set_editable_focus(&self, hint: &EditableFocusHint);
     #[cfg(feature = "flutter")]
     fn is_multi_ui_session(&self) -> bool;
     fn update_record_status(&self, start: bool);
