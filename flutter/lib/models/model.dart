@@ -1030,6 +1030,12 @@ class FfiModel with ChangeNotifier {
     final noteAllowed = parent.target != null &&
         allowAskForNoteAtEndOfConnection(parent.target, false) &&
         (title == "Connection Error" || type == "restarting");
+    final shouldAutoCloseWindow = !hasRetry &&
+      isDesktop &&
+      parent.target != null &&
+      desktopType != DesktopType.main &&
+      desktopType != DesktopType.cm &&
+      (title == "Connection Error" || type == "restarting");
     final showNoteEdit = noteAllowed && !hasRetry;
     if (showNoteEdit) {
       await showConnEndAuditDialogCloseCanceled(
@@ -1051,7 +1057,8 @@ class FfiModel with ChangeNotifier {
           hasCancel: hasCancel,
           reconnect: hasRetry ? reconnect : null,
           reconnectTimeout: hasRetry ? _reconnects : null,
-          onSubmit: onSubmit);
+          onSubmit: onSubmit,
+          submitTimeout: shouldAutoCloseWindow ? 3 : null);
     }
     _timer?.cancel();
     if (hasRetry) {
@@ -4021,6 +4028,7 @@ class FFI {
         name: PeersModelName.recent,
         loadEvent: LoadEvent.recent,
         getInitPeers: null);
+    abModel.attachRecentPeersModel(recentPeersModel);
     favoritePeersModel = Peers(
         name: PeersModelName.favorite,
         loadEvent: LoadEvent.favorite,

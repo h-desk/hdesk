@@ -1,5 +1,10 @@
 @echo off
-set "PATH=D:\software\flutter\bin;%PATH%"
+set "FLUTTER_ROOT=D:\software\flutter-3.41.4"
+if not exist "%FLUTTER_ROOT%\bin\flutter.bat" (
+	echo Missing Flutter SDK: %FLUTTER_ROOT%\bin\flutter.bat
+	exit /b 1
+)
+set "PATH=%FLUTTER_ROOT%\bin;%PATH%"
 echo [Flutter Windows Build - no codegen]
 cd /d D:\ideas\rustdesk
 python build.py --flutter --skip-portable-pack > D:\ideas\rustdesk\flutter-build-log.txt 2>&1

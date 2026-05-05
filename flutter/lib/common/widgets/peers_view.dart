@@ -311,8 +311,8 @@ class _PeersViewState extends State<_PeersView>
 
             if (updateEvent == UpdateEvent.load) {
               _curPeers.clear();
-              _curPeers.addAll(peers.map((e) => e.id));
-              _queryOnlines(true);
+              _lastQueryPeers = <String>{};
+              _lastChangeTime = DateTime.now();
             }
             return _wrapScrollable(child);
           } else {
@@ -355,7 +355,7 @@ class _PeersViewState extends State<_PeersView>
         final now = DateTime.now();
         if (!setEquals(_curPeers, _lastQueryPeers)) {
           if (now.difference(_lastChangeTime) > const Duration(seconds: 1)) {
-            _queryOnlines(false);
+            _queryOnlines();
           }
         } else {
           final skipIfIsWeb =
@@ -378,17 +378,15 @@ class _PeersViewState extends State<_PeersView>
     }();
   }
 
-  _queryOnlines(bool isLoadEvent) {
+  _queryOnlines() {
+    final now = DateTime.now();
     if (_curPeers.isNotEmpty) {
       bind.queryOnlines(ids: _curPeers.toList(growable: false));
       _queryCount = 0;
+      _lastQueryTime = now;
     }
     _lastQueryPeers = {..._curPeers};
-    if (isLoadEvent) {
-      _lastChangeTime = DateTime.now();
-    } else {
-      _lastQueryTime = DateTime.now().subtract(_queryInterval);
-    }
+    _lastChangeTime = now;
   }
 
   Future<List<Peer>>? matchPeers(
@@ -496,11 +494,7 @@ class RecentPeersView extends BasePeersView {
         );
 
   @override
-  Widget build(BuildContext context) {
-    final widget = super.build(context);
-    bind.mainLoadRecentPeers();
-    return widget;
-  }
+  Widget build(BuildContext context) => super.build(context);
 }
 
 class FavoritePeersView extends BasePeersView {

@@ -7,6 +7,7 @@ import 'package:flutter_hbb/main.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
+import 'package:flutter_hbb/models/state_model.dart';
 import 'package:get/get.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -148,6 +149,7 @@ class ServerModel with ChangeNotifier {
 
   late String _emptyIdShow;
   late final IDTextEditingController _serverId;
+  bool _timerCallbackInFlight = false;
   final _serverPasswd =
       TextEditingController(text: translate("Generating ..."));
 
@@ -275,6 +277,22 @@ class ServerModel with ChangeNotifier {
       final connectionStatus =
           jsonDecode(await bind.mainGetConnectStatus()) as Map<String, dynamic>;
       final statusNum = connectionStatus['status_num'] as int;
+      final nextSvcStatus = statusNum == 0
+          ? SvcStatus.connecting
+          : statusNum == 1
+              ? SvcStatus.ready
+              : SvcStatus.notReady;
+      if (stateGlobal.svcStatus.value != nextSvcStatus) {
+        stateGlobal.svcStatus.value = nextSvcStatus;
+      }
+      final nextVideoConnCount = connectionStatus['video_conn_count'];
+      if (nextVideoConnCount is int) {
+        if (stateGlobal.videoConnCount.value != nextVideoConnCount) {
+          stateGlobal.videoConnCount.value = nextVideoConnCount;
+        }
+      } else if (stateGlobal.videoConnCount.value != 0) {
+        stateGlobal.videoConnCount.value = 0;
+      }
       if (statusNum != _connectStatus) {
         _connectStatus = statusNum;
         notifyListeners();
@@ -304,20 +322,36 @@ class ServerModel with ChangeNotifier {
       }
 
       if (desktopType == DesktopType.main) {
+        await fetchID(connectionStatus: connectionStatus);
         await _syncDesktopControlledSessionsFromSharedOption();
       }
 
-      updatePasswordModel();
+      updatePasswordModel(connectionStatus: connectionStatus);
+    }
+
+    runTimerCallback() async {
+      if (_timerCallbackInFlight) {
+        return;
+      }
+      _timerCallbackInFlight = true;
+      try {
+        await timerCallback();
+      } finally {
+        _timerCallbackInFlight = false;
+      }
     }
 
     if (!isTest) {
+      final timerInterval = desktopType == DesktopType.main
+          ? const Duration(seconds: 2)
+          : const Duration(milliseconds: 500);
       Future.delayed(Duration.zero, () async {
         if (await bind.optionSynced()) {
-          await timerCallback();
+          await runTimerCallback();
         }
       });
-      Timer.periodic(Duration(milliseconds: 500), (timer) async {
-        await timerCallback();
+      Timer.periodic(timerInterval, (timer) async {
+        await runTimerCallback();
       });
     }
 
@@ -359,16 +393,25 @@ class ServerModel with ChangeNotifier {
     notifyListeners();
   }
 
-  updatePasswordModel() async {
+    updatePasswordModel({Map<String, dynamic>? connectionStatus}) async {
     var update = false;
-    final temporaryPassword = await bind.mainGetTemporaryPassword();
-    final verificationMethod =
-        await bind.mainGetOption(key: kOptionVerificationMethod);
+    final temporaryPassword = connectionStatus?['temporary_password'] is String
+      ? connectionStatus!['temporary_password'] as String
+      : await bind.mainGetTemporaryPassword();
+    final verificationMethod = connectionStatus?['verification_method'] is String
+      ? connectionStatus!['verification_method'] as String
+      : await bind.mainGetOption(key: kOptionVerificationMethod);
     final temporaryPasswordLength =
-        await bind.mainGetOption(key: "temporary-password-length");
-    final approveMode = await bind.mainGetOption(key: kOptionApproveMode);
+      connectionStatus?['temporary_password_length'] is String
+        ? connectionStatus!['temporary_password_length'] as String
+        : await bind.mainGetOption(key: "temporary-password-length");
+    final approveMode = connectionStatus?['approve_mode'] is String
+      ? connectionStatus!['approve_mode'] as String
+      : await bind.mainGetOption(key: kOptionApproveMode);
     final numericOneTimePassword =
-        await mainGetBoolOption(kOptionAllowNumericOneTimePassword);
+      connectionStatus?['allow_numeric_one_time_password'] is bool
+        ? connectionStatus!['allow_numeric_one_time_password'] as bool
+        : await mainGetBoolOption(kOptionAllowNumericOneTimePassword);
     /*
     var hideCm = option2bool(
         'allow-hide-cm', await bind.mainGetOption(key: 'allow-hide-cm'));
@@ -381,7 +424,9 @@ class ServerModel with ChangeNotifier {
       _approveMode = approveMode;
       update = true;
     }
-    var stopped = await mainGetBoolOption(kOptionStopService);
+    var stopped = connectionStatus?['stop_service'] is bool
+      ? connectionStatus!['stop_service'] as bool
+      : await mainGetBoolOption(kOptionStopService);
     final oldPwdText = _serverPasswd.text;
     final useOneTimePassword = !(stopped ||
         verificationMethod == kUsePermanentPassword ||
@@ -616,8 +661,10 @@ class ServerModel with ChangeNotifier {
     WakelockManager.disable(_wakelockKey);
   }
 
-  fetchID() async {
-    final id = await bind.mainGetMyId();
+  fetchID({Map<String, dynamic>? connectionStatus}) async {
+    final id = connectionStatus?['id'] is String
+        ? connectionStatus!['id'] as String
+        : await bind.mainGetMyId();
     if (id != _serverId.id) {
       _serverId.id = id;
       notifyListeners();
