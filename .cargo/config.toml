@@ -16,6 +16,6 @@ rustflags = [
 git-fetch-with-cli = true
 
 [env]
-VCPKG_ROOT = { value = "D:/vcpkg", force = true }
-LIBCLANG_PATH = { value = "D:/software/DevEco Studio/sdk/default/openharmony/native/llvm/bin", force = true }
+VCPKG_ROOT = { value = "D:/vcpkg" }
+LIBCLANG_PATH = { value = "D:/software/DevEco Studio/sdk/default/openharmony/native/llvm/bin" }
 BINDGEN_EXTRA_CLANG_ARGS_x86_64_pc_windows_msvc = { value = "--target=x86_64-pc-windows-msvc -I\"D:/software/DevEco Studio/sdk/default/openharmony/native/llvm/lib/clang/15.0.4/include\" -I\"C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/include\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/shared\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/um\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/winrt\" -I\"C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/cppwinrt\"", force = true }

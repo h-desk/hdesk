@@ -2443,12 +2443,13 @@ pub fn is_udp_disabled() -> bool {
 
 #[inline]
 fn is_public_ipv6(ip: &Ipv6Addr) -> bool {
+    let first_segment = ip.segments()[0];
     !ip.is_loopback()
         && !ip.is_unspecified()
         && !ip.is_multicast()
-        && !ip.is_unique_local()
-        && !ip.is_unicast_link_local()
-        && (ip.segments()[0] & 0xe000) == 0x2000
+        && (first_segment & 0xfe00) != 0xfc00
+        && (first_segment & 0xffc0) != 0xfe80
+        && (first_segment & 0xe000) == 0x2000
 }
 
 #[cfg(not(target_os = "ios"))]

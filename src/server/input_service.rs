@@ -806,7 +806,7 @@ mod tests {
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 fn send_editable_focus_hint(
     sp: &EmptyExtraFieldService,
     state: &mut StateEditableFocus,
@@ -1074,7 +1074,43 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus) -> ResultType<()> {
+    // V1 for macOS only reports frontmost-window changes. Poll more slowly while
+    // idle because there is no editable-state tracking or click-proxy reuse yet.
+    state.idle_counter = state.idle_counter.saturating_add(1);
+    if state.idle_counter % 3 != 0 {
+        return Ok(());
+    }
+
+    let displays = super::display_service::get_sync_displays();
+    let hint_info = match crate::platform::get_editable_focus_hint(&displays) {
+        Some(h) => h,
+        None => return Ok(()),
+    };
+
+    if !hint_changed(&state.last_hint, &hint_info) {
+        return Ok(());
+    }
+
+    log::info!(
+        "editable_focus CHANGED: editable={}, kind={}, rev={}, window={:?}, editor={:?}, pane={:?}",
+        hint_info.editable,
+        hint_info.content_kind,
+        state.revision + 1,
+        hint_info.window,
+        hint_info.editor,
+        hint_info.pane,
+    );
+
+    state.idle_counter = 0;
+    state.last_hint = Some(hint_info.clone());
+    send_editable_focus_hint(&sp, state, &hint_info);
+
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn run_editable_focus(_sp: EmptyExtraFieldService, _state: &mut StateEditableFocus) -> ResultType<()> {
     // Only implemented for Windows in v1
     Ok(())
