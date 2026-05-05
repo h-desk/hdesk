@@ -45,6 +45,20 @@ pub struct UiStatus {
     pub id: String,
     #[cfg(feature = "flutter")]
     pub video_conn_count: usize,
+    #[cfg(feature = "flutter")]
+    pub id: String,
+    #[cfg(feature = "flutter")]
+    pub temporary_password: String,
+    #[cfg(feature = "flutter")]
+    pub verification_method: String,
+    #[cfg(feature = "flutter")]
+    pub temporary_password_length: String,
+    #[cfg(feature = "flutter")]
+    pub approve_mode: String,
+    #[cfg(feature = "flutter")]
+    pub allow_numeric_one_time_password: bool,
+    #[cfg(feature = "flutter")]
+    pub stop_service: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -65,6 +79,20 @@ lazy_static::lazy_static! {
         id: "".to_owned(),
         #[cfg(feature = "flutter")]
         video_conn_count: 0,
+        #[cfg(feature = "flutter")]
+        id: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        temporary_password: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        verification_method: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        temporary_password_length: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        approve_mode: "".to_owned(),
+        #[cfg(feature = "flutter")]
+        allow_numeric_one_time_password: false,
+        #[cfg(feature = "flutter")]
+        stop_service: false,
     }));
     static ref ASYNC_JOB_STATUS : Arc<Mutex<String>> = Default::default();
     static ref ASYNC_HTTP_STATUS : Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
@@ -76,6 +104,7 @@ lazy_static::lazy_static! {
 lazy_static::lazy_static! {
     static ref OPTION_SYNCED: Arc<Mutex<bool>> = Default::default();
     static ref OPTIONS : Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(Config::get_options()));
+    static ref CURRENT_ID: Arc<Mutex<String>> = Arc::new(Mutex::new(Config::get_id()));
     pub static ref SENDER : Mutex<mpsc::UnboundedSender<ipc::Data>> = Mutex::new(check_connect_status(true));
     static ref CHILDREN : Children = Default::default();
 }
@@ -92,8 +121,15 @@ const INIT_ASYNC_JOB_STATUS: &str = " ";
 pub fn get_id() -> String {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     return Config::get_id();
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    return ipc::get_id();
+    #[cfg(all(feature = "flutter", not(any(target_os = "android", target_os = "ios"))))]
+    {
+        let id = CURRENT_ID.lock().unwrap().clone();
+        if id.is_empty() {
+            Config::get_id()
+        } else {
+            id
+        }
+    }
 }
 
 #[inline]
@@ -589,7 +625,42 @@ pub fn check_mouse_time() {
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn get_connect_status() -> UiStatus {
-    UI_STATUS.lock().unwrap().clone()
+    #[cfg(feature = "flutter")]
+    {
+        let status = UI_STATUS.lock().unwrap().clone();
+        let id = CURRENT_ID.lock().unwrap().clone();
+        let temporary_password = TEMPORARY_PASSWD.lock().unwrap().clone();
+        let options = OPTIONS.lock().unwrap();
+        UiStatus {
+            status_num: status.status_num,
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
+            mouse_time: status.mouse_time,
+            video_conn_count: status.video_conn_count,
+            id,
+            temporary_password,
+            verification_method: options
+                .get("verification-method")
+                .cloned()
+                .unwrap_or_default(),
+            temporary_password_length: options
+                .get("temporary-password-length")
+                .cloned()
+                .unwrap_or_default(),
+            approve_mode: options.get("approve-mode").cloned().unwrap_or_default(),
+            allow_numeric_one_time_password: options
+                .get("allow-numeric-one-time-password")
+                .map(|v| v == "Y")
+                .unwrap_or(false),
+            stop_service: options
+                .get("stop-service")
+                .map(|v| v == "Y")
+                .unwrap_or(false),
+        }
+    }
+    #[cfg(not(feature = "flutter"))]
+    {
+        UI_STATUS.lock().unwrap().clone()
+    }
 }
 
 #[inline]
@@ -1254,6 +1325,10 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                     {
                                         id = value;
                                     }
+                                    #[cfg(feature = "flutter")]
+                                    {
+                                        *CURRENT_ID.lock().unwrap() = value;
+                                    }
                                 } else if name == "temporary-password" {
                                     *TEMPORARY_PASSWD.lock().unwrap() = value;
                                 }
@@ -1280,6 +1355,20 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
                                     id: id.clone(),
                                     #[cfg(feature = "flutter")]
                                     video_conn_count,
+                                    #[cfg(feature = "flutter")]
+                                    id: "".to_owned(),
+                                    #[cfg(feature = "flutter")]
+                                    temporary_password: "".to_owned(),
+                                    #[cfg(feature = "flutter")]
+                                    verification_method: "".to_owned(),
+                                    #[cfg(feature = "flutter")]
+                                    temporary_password_length: "".to_owned(),
+                                    #[cfg(feature = "flutter")]
+                                    approve_mode: "".to_owned(),
+                                    #[cfg(feature = "flutter")]
+                                    allow_numeric_one_time_password: false,
+                                    #[cfg(feature = "flutter")]
+                                    stop_service: false,
                                 };
                             }
                             Ok(Some(ipc::Data::ControlPermissionsRemoteModify(v))) => {
@@ -1332,6 +1421,20 @@ async fn check_connect_status_(reconnect: bool, rx: mpsc::UnboundedReceiver<ipc:
             id: id.clone(),
             #[cfg(feature = "flutter")]
             video_conn_count,
+            #[cfg(feature = "flutter")]
+            id: "".to_owned(),
+            #[cfg(feature = "flutter")]
+            temporary_password: "".to_owned(),
+            #[cfg(feature = "flutter")]
+            verification_method: "".to_owned(),
+            #[cfg(feature = "flutter")]
+            temporary_password_length: "".to_owned(),
+            #[cfg(feature = "flutter")]
+            approve_mode: "".to_owned(),
+            #[cfg(feature = "flutter")]
+            allow_numeric_one_time_password: false,
+            #[cfg(feature = "flutter")]
+            stop_service: false,
         };
         sleep(1.).await;
     }

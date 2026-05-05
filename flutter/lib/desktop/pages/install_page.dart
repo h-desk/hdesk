@@ -42,14 +42,15 @@ class _InstallPageState extends State<InstallPage> {
 
   @override
   Widget build(BuildContext context) {
+    final content = Container(
+      child: Scaffold(
+          backgroundColor: Theme.of(context).colorScheme.background,
+          body: DesktopTab(controller: tabController)),
+    );
     return DragToResizeArea(
       resizeEdgeSize: stateGlobal.resizeEdgeSize.value,
       enableResizeEdges: windowManagerEnableResizeEdges,
-      child: Container(
-        child: Scaffold(
-            backgroundColor: Theme.of(context).colorScheme.background,
-            body: DesktopTab(controller: tabController)),
-      ),
+      child: content,
     );
   }
 }

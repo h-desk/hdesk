@@ -7,7 +7,7 @@ on:
 
 env:
   CARGO_EXPAND_VERSION: "1.0.95"
-  FLUTTER_VERSION: "3.22.3"
+  FLUTTER_VERSION: "3.41.4"
   FLUTTER_RUST_BRIDGE_VERSION: "1.80.1"
   RUST_VERSION: "1.75" # https://github.com/rustdesk/rustdesk/discussions/7503
 

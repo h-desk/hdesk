@@ -52,6 +52,88 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
   final GlobalKey _childKey = GlobalKey();
 
+  bool get _needsPermissionWatch =>
+      watchIsCanScreenRecording ||
+      watchIsProcessTrust ||
+      watchIsInputMonitoring ||
+      watchIsCanRecordAudio;
+
+  Future<void> _refreshHomeState({bool pollPermissionWatch = false}) async {
+    if (!isWindows) {
+      final error = await bind.mainGetError();
+      if (systemError != error) {
+        systemError = error;
+        if (mounted) {
+          setState(() {});
+        }
+      }
+    }
+
+    final stopped = await mainGetBoolOption(kOptionStopService);
+    if (stopped != svcStopped.value) {
+      svcStopped.value = stopped;
+      if (stopped) {
+        start_service(true);
+      }
+      if (mounted) {
+        setState(() {});
+      }
+    }
+
+    if (!pollPermissionWatch || !_needsPermissionWatch) {
+      return;
+    }
+
+    if (watchIsCanScreenRecording && bind.mainIsCanScreenRecording(prompt: false)) {
+      watchIsCanScreenRecording = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    if (watchIsProcessTrust && bind.mainIsProcessTrusted(prompt: false)) {
+      watchIsProcessTrust = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    if (watchIsInputMonitoring && bind.mainIsCanInputMonitoring(prompt: false)) {
+      watchIsInputMonitoring = false;
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    if (watchIsCanRecordAudio) {
+      if (isMacOS) {
+        Future.microtask(() async {
+          if ((await osxCanRecordAudio() == PermissionAuthorizeType.authorized)) {
+            watchIsCanRecordAudio = false;
+            if (mounted) {
+              setState(() {});
+            }
+          }
+        });
+      } else {
+        watchIsCanRecordAudio = false;
+        if (mounted) {
+          setState(() {});
+        }
+      }
+    }
+  }
+
+  void _ensurePermissionWatchTimer() {
+    if (!isMacOS || !_needsPermissionWatch || _updateTimer != null) {
+      return;
+    }
+    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
+      await _refreshHomeState(pollPermissionWatch: true);
+      if (!_needsPermissionWatch) {
+        _updateTimer?.cancel();
+        _updateTimer = null;
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
@@ -796,18 +878,21 @@ class _DesktopHomePageState extends State<DesktopHomePage>
             () async {
           bind.mainIsCanScreenRecording(prompt: true);
           watchIsCanScreenRecording = true;
+          _ensurePermissionWatchTimer();
         }, help: 'Help', link: translate("doc_mac_permission"));
       } else if (!isOutgoingOnly && !bind.mainIsProcessTrusted(prompt: false)) {
         return buildInstallCard("Permissions", "config_acc", "Configure",
             () async {
           bind.mainIsProcessTrusted(prompt: true);
           watchIsProcessTrust = true;
+          _ensurePermissionWatchTimer();
         }, help: 'Help', link: translate("doc_mac_permission"));
       } else if (!bind.mainIsCanInputMonitoring(prompt: false)) {
         return buildInstallCard("Permissions", "config_input", "Configure",
             () async {
           bind.mainIsCanInputMonitoring(prompt: true);
           watchIsInputMonitoring = true;
+          _ensurePermissionWatchTimer();
         }, help: 'Help', link: translate("doc_mac_permission"));
       } else if (!isOutgoingOnly &&
           !svcStopped.value &&
@@ -1010,58 +1095,9 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void initState() {
     super.initState();
-    _updateTimer = periodic_immediate(const Duration(seconds: 1), () async {
-      await gFFI.serverModel.fetchID();
-      final error = await bind.mainGetError();
-      if (systemError != error) {
-        systemError = error;
-        setState(() {});
-      }
-      final v = await mainGetBoolOption(kOptionStopService);
-      if (v != svcStopped.value) {
-        svcStopped.value = v;
-        // 如果服务停止，自动启动它（用户不需要手动操作）
-        if (v) {
-          start_service(true);
-        }
-        setState(() {});
-      }
-      if (watchIsCanScreenRecording) {
-        if (bind.mainIsCanScreenRecording(prompt: false)) {
-          watchIsCanScreenRecording = false;
-          setState(() {});
-        }
-      }
-      if (watchIsProcessTrust) {
-        if (bind.mainIsProcessTrusted(prompt: false)) {
-          watchIsProcessTrust = false;
-          setState(() {});
-        }
-      }
-      if (watchIsInputMonitoring) {
-        if (bind.mainIsCanInputMonitoring(prompt: false)) {
-          watchIsInputMonitoring = false;
-          // Do not notify for now.
-          // Monitoring may not take effect until the process is restarted.
-          // rustDeskWinManager.call(
-          //     WindowType.RemoteDesktop, kWindowDisableGrabKeyboard, '');
-          setState(() {});
-        }
-      }
-      if (watchIsCanRecordAudio) {
-        if (isMacOS) {
-          Future.microtask(() async {
-            if ((await osxCanRecordAudio() ==
-                PermissionAuthorizeType.authorized)) {
-              watchIsCanRecordAudio = false;
-              setState(() {});
-            }
-          });
-        } else {
-          watchIsCanRecordAudio = false;
-          setState(() {});
-        }
-      }
+    Future.microtask(() async {
+      await _refreshHomeState();
+      _ensurePermissionWatchTimer();
     });
     Get.put<RxBool>(svcStopped, tag: 'stop-service');
     rustDeskWinManager.registerActiveWindowListener(onActiveWindowChanged);

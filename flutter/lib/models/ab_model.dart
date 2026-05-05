@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_hbb/common/hbbs/hbbs.dart';
@@ -66,10 +65,11 @@ class AbModel {
 
   var _syncAllFromRecent = true;
   var _syncFromRecentLock = false;
-  var _timerCounter = 0;
   var _cacheLoadOnceFlag = false;
   var listInitialized = false;
   var _maxPeerOneAb = 0;
+  bool _syncFromRecentInFlight = false;
+  bool _recentPeersSyncAttached = false;
 
   late final Peers peersModel;
 
@@ -81,16 +81,53 @@ class AbModel {
         name: PeersModelName.addressBook,
         getInitPeers: () => currentAbPeers,
         loadEvent: LoadEvent.addressBook);
-    if (desktopType == DesktopType.main) {
-      Timer.periodic(Duration(milliseconds: 500), (timer) async {
-        if (_timerCounter++ % 6 == 0) {
-          if (!gFFI.userModel.isLogin) return;
-          if (!listInitialized) return;
-          if (!current.initialized || !current.canWrite()) return;
-          _syncFromRecent();
-        }
-      });
+  }
+
+  void attachRecentPeersModel(Peers recentPeersModel) {
+    if (_recentPeersSyncAttached || desktopType != DesktopType.main) {
+      return;
     }
+    _recentPeersSyncAttached = true;
+    recentPeersModel.addListener(() {
+      if (recentPeersModel.event != UpdateEvent.load) {
+        return;
+      }
+      _scheduleSyncFromRecentIfNeeded();
+    });
+    if (recentPeersModel.peers.isNotEmpty ||
+        recentPeersModel.restPeerIds.isNotEmpty) {
+      _scheduleSyncFromRecentIfNeeded();
+    }
+  }
+
+  void _scheduleSyncFromRecentIfNeeded() {
+    if (desktopType != DesktopType.main ||
+        _syncFromRecentInFlight ||
+        _syncFromRecentLock ||
+        !shouldSyncAb() ||
+        !gFFI.userModel.isLogin ||
+        !listInitialized ||
+        !current.initialized ||
+        !current.canWrite()) {
+      return;
+    }
+    Future.microtask(() async {
+      if (_syncFromRecentInFlight ||
+          _syncFromRecentLock ||
+          !shouldSyncAb() ||
+          !gFFI.userModel.isLogin ||
+          !listInitialized ||
+          !current.initialized ||
+          !current.canWrite()) {
+        return;
+      }
+      _syncFromRecentInFlight = true;
+      try {
+        await _syncFromRecent();
+      } finally {
+        _syncFromRecentInFlight = false;
+      }
+    });
   }
 
   reset() async {
@@ -194,6 +231,7 @@ class AbModel {
     _callbackPeerUpdate();
     if (listInitialized && current.initialized) {
       _saveCache();
+      _scheduleSyncFromRecentIfNeeded();
     }
   }
 
@@ -545,7 +583,7 @@ class AbModel {
     await bind.mainSetLocalOption(
         key: syncAbOption, value: v ? 'Y' : defaultOptionNo);
     _syncAllFromRecent = true;
-    _timerCounter = 0;
+    _scheduleSyncFromRecentIfNeeded();
   }
 
 // #endregion

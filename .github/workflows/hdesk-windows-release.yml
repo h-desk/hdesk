@@ -19,7 +19,7 @@ permissions:
 
 env:
   LLVM_VERSION: "15.0.6"
-  FLUTTER_VERSION: "3.24.5"
+  WINDOWS_FLUTTER_VERSION: "3.41.4"
   RUST_VERSION: "1.75"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_DEFAULT_HOST_TRIPLET: "x64-windows-static"
@@ -138,23 +138,20 @@ PY
         uses: subosito/flutter-action@v2.12.0
         with:
           channel: stable
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: ${{ env.WINDOWS_FLUTTER_VERSION }}
 
-      - name: Replace engine with rustdesk custom flutter engine
+      - name: Precache official Windows Flutter engine
         shell: pwsh
         run: |
           flutter doctor -v
           flutter precache --windows
-          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
-          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          Copy-Item -Path ".\windows-x64-release\*" -Destination "C:/hostedtoolcache/windows/flutter/stable-${{ env.FLUTTER_VERSION }}-x64/bin/cache/artifacts/engine/windows-x64-release/" -Recurse -Force
 
       - name: Patch Flutter
         shell: bash
         run: |
           cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$(dirname "$(dirname "$(which flutter)")")"
           cd "$(dirname "$(dirname "$(which flutter)")")"
-          if [ "${{ env.FLUTTER_VERSION }}" = "3.24.5" ]; then
+          if [ "${{ env.WINDOWS_FLUTTER_VERSION }}" = "3.24.5" ]; then
             git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
           fi
 

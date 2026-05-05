@@ -544,36 +544,47 @@ class _DesktopTabState extends State<DesktopTab>
   List<Widget> _tabWidgets = [];
   Widget _buildPageView() {
     final child = Container(
-        child: Obx(() => PageView(
-            controller: state.value.pageController,
-            physics: NeverScrollableScrollPhysics(),
-            children: () {
-              if (DesktopTabType.cm == tabType) {
-                // Fix when adding a new tab still showing closed tabs with the same peer id, which would happen after the DesktopTab was stateful.
-                return state.value.tabs.map((tab) {
-                  return tab.page;
-                }).toList();
-              }
+        child: Obx(() {
+          final tabs = state.value.tabs;
+          if (tabs.isEmpty) {
+            _tabWidgets = [];
+            return const SizedBox.shrink();
+          }
+          if (tabs.length == 1) {
+            _tabWidgets = [tabs.first.page];
+            return tabs.first.page;
+          }
+          return PageView(
+              controller: state.value.pageController,
+              physics: NeverScrollableScrollPhysics(),
+              children: () {
+                if (DesktopTabType.cm == tabType) {
+                  // Fix when adding a new tab still showing closed tabs with the same peer id, which would happen after the DesktopTab was stateful.
+                  return tabs.map((tab) {
+                    return tab.page;
+                  }).toList();
+                }
 
-              /// to-do refactor, separate connection state and UI state for remote session.
-              /// [workaround] PageView children need an immutable list, after it has been passed into PageView
-              final tabLen = state.value.tabs.length;
-              if (tabLen == _tabWidgets.length) {
-                return _tabWidgets;
-              } else if (_tabWidgets.isNotEmpty &&
-                  tabLen == _tabWidgets.length + 1) {
-                /// On add. Use the previous list(pointer) to prevent item's state init twice.
-                /// *[_tabWidgets.isNotEmpty] means TabsWindow(remote_tab_page or file_manager_tab_page) opened before, but was hidden. In this case, we have to reload, otherwise the child can't be built.
-                _tabWidgets.add(state.value.tabs.last.page);
-                return _tabWidgets;
-              } else {
-                /// On remove or change. Use new list(pointer) to reload list children so that items loading order is normal.
-                /// the Widgets in list must enable [AutomaticKeepAliveClientMixin]
-                final newList = state.value.tabs.map((v) => v.page).toList();
-                _tabWidgets = newList;
-                return newList;
-              }
-            }())));
+                /// to-do refactor, separate connection state and UI state for remote session.
+                /// [workaround] PageView children need an immutable list, after it has been passed into PageView
+                final tabLen = tabs.length;
+                if (tabLen == _tabWidgets.length) {
+                  return _tabWidgets;
+                } else if (_tabWidgets.isNotEmpty &&
+                    tabLen == _tabWidgets.length + 1) {
+                  /// On add. Use the previous list(pointer) to prevent item's state init twice.
+                  /// *[_tabWidgets.isNotEmpty] means TabsWindow(remote_tab_page or file_manager_tab_page) opened before, but was hidden. In this case, we have to reload, otherwise the child can't be built.
+                  _tabWidgets.add(tabs.last.page);
+                  return _tabWidgets;
+                } else {
+                  /// On remove or change. Use new list(pointer) to reload list children so that items loading order is normal.
+                  /// the Widgets in list must enable [AutomaticKeepAliveClientMixin]
+                  final newList = tabs.map((v) => v.page).toList();
+                  _tabWidgets = newList;
+                  return newList;
+                }
+              }());
+        }));
     if (tabType == DesktopTabType.remoteScreen) {
       return Container(color: kColorCanvas, child: child);
     } else {

@@ -2816,9 +2816,23 @@ Future<void> onActiveWindowChanged() async {
 }
 
 Timer periodic_immediate(Duration duration, Future<void> Function() callback) {
-  Future.delayed(Duration.zero, callback);
+  var callbackInFlight = false;
+
+  runCallback() async {
+    if (callbackInFlight) {
+      return;
+    }
+    callbackInFlight = true;
+    try {
+      await callback();
+    } finally {
+      callbackInFlight = false;
+    }
+  }
+
+  Future.delayed(Duration.zero, runCallback);
   return Timer.periodic(duration, (timer) async {
-    await callback();
+    await runCallback();
   });
 }
 
@@ -3068,6 +3082,9 @@ Future<void> start_service(bool is_start) async {
       await callMainCheckSuperUserPermission();
   if (checked) {
     mainSetBoolOption(kOptionStopService, !is_start);
+    if (Get.isRegistered<RxBool>(tag: 'stop-service')) {
+      Get.find<RxBool>(tag: 'stop-service').value = !is_start;
+    }
   }
 }
 

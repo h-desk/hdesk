@@ -1,6 +1,11 @@
 @echo off
 cd /d D:\ideas\rustdesk
-set "PATH=D:\software\flutter\bin;%PATH%"
+set "FLUTTER_ROOT=D:\software\flutter-3.41.4"
+if not exist "%FLUTTER_ROOT%\bin\flutter.bat" (
+  echo Missing Flutter SDK: %FLUTTER_ROOT%\bin\flutter.bat
+  exit /b 1
+)
+set "PATH=%FLUTTER_ROOT%\bin;%PATH%"
 set RUST_LOG=info
 echo [1/3] Generating FRB bindings...
 "C:\Users\keke.qiu\.cargo\bin\flutter_rust_bridge_codegen.exe" ^
