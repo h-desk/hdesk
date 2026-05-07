@@ -1742,6 +1742,7 @@ class FfiModel with ChangeNotifier {
     return jsonEncode({
       'display_idx': _eventInt(evt['display_idx']) ?? 0,
       'content_kind': _eventInt(evt['content_kind']) ?? 0,
+      'caret': _eventRect(evt['caret']),
       'editor': _eventRect(evt['editor']),
       'pane': _eventRect(evt['pane']),
       'window': _eventRect(evt['window']),
@@ -2909,6 +2910,7 @@ class CanvasModel with ChangeNotifier {
 
     late final Rect targetRect;
     late final Rect anchorRect;
+    late final Rect horizontalAnchorRect;
     switch (contentKind) {
       case 3:
         targetRect = paneRect ??
@@ -2920,26 +2922,29 @@ class CanvasModel with ChangeNotifier {
             windowRect ??
             fullRect;
         anchorRect = caretRect ?? editorRect ?? targetRect;
+        horizontalAnchorRect = paneRect ?? targetRect;
         break;
       case 2:
-        targetRect = paneRect ??
-            editorBand ??
+        targetRect = editorBand ??
             editorRect ??
             caretBand ??
+            paneRect ??
             windowBand ??
             windowRect ??
             fullRect;
-        anchorRect = editorRect ?? caretRect ?? targetRect;
+        anchorRect = caretRect ?? editorRect ?? targetRect;
+        horizontalAnchorRect = targetRect;
         break;
       default:
-        targetRect = paneRect ??
-            editorBand ??
+        targetRect = editorBand ??
             editorRect ??
             caretBand ??
+            paneRect ??
             windowBand ??
             windowRect ??
             fullRect;
-        anchorRect = editorRect ?? caretRect ?? targetRect;
+        anchorRect = caretRect ?? editorRect ?? targetRect;
+        horizontalAnchorRect = targetRect;
         break;
     }
 
@@ -2968,7 +2973,7 @@ class CanvasModel with ChangeNotifier {
         (contentKind == 3
             ? min(96.0, safeHeight * 0.18)
             : min(72.0, safeHeight * 0.14));
-    final horizontalAnchorX = (paneRect ?? targetRect).center.dx;
+    final horizontalAnchorX = horizontalAnchorRect.center.dx;
     final verticalAnchorBottom = anchorRect.bottom;
 
     var newX = desiredCenterX - horizontalAnchorX * newScale;

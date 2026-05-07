@@ -116,6 +116,8 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
 
 /// Editable focus hint data returned by `get_editable_focus_hint`.
 /// All rects are in desktop global coordinates (pixels, origin = virtual-desktop top-left).
+pub const EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE: u32 = 1 << 0;
+
 #[derive(Clone, PartialEq, Debug, Default)]
 pub struct EditableFocusHintInfo {
     /// Whether the currently focused UI element accepts keyboard text input.
@@ -135,6 +137,8 @@ pub struct EditableFocusHintInfo {
     /// Foreground window handle (used to detect app switch when window rects are identical).
     /// This is NOT transmitted over the wire, only used for local change detection.
     pub foreground_hwnd: isize,
+    /// Local-only platform diagnostics for editable-focus fallbacks. Not sent over wire.
+    pub platform_flags: u32,
 }
 
 #[derive(Clone)]

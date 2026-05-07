@@ -477,8 +477,11 @@ struct EditableClickIntent {
 
 const EDITABLE_CLICK_OBSERVE_MS: u64 = 1400;
 const EDITABLE_PROXY_WINDOW_TOL: i32 = 24;
+const EDITABLE_CLICK_WINDOW_ARM_TOL: i32 = 8;
 const RECENT_EDITABLE_HINT_TTL_MS: u64 = 45_000;
 const RECENT_EDITABLE_HINT_LIMIT: usize = 6;
+#[cfg(target_os = "macos")]
+const MACOS_CLICK_TARGET_SETTLE_MS: u64 = 120;
 static NEXT_EDITABLE_CLICK_SEQ: AtomicU64 = AtomicU64::new(1);
 
 fn editable_rect_has_area(rect: (i32, i32, i32, i32)) -> bool {
@@ -511,6 +514,16 @@ fn rect_contains_rect_with_margin(
         && inner.1 >= outer.1 - margin_y
         && inner.0 + inner.2 <= outer.0 + outer.2 + margin_x
         && inner.1 + inner.3 <= outer.1 + outer.3 + margin_y
+}
+
+fn editable_click_window_contains_point(window: (i32, i32, i32, i32), x: i32, y: i32) -> bool {
+    rect_contains_point_with_margin(
+        window,
+        x,
+        y,
+        EDITABLE_CLICK_WINDOW_ARM_TOL,
+        EDITABLE_CLICK_WINDOW_ARM_TOL,
+    )
 }
 
 fn editable_windows_match(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
@@ -576,6 +589,264 @@ fn proxy_hit_test(
         .map(|band| rect_contains_point_with_margin(band, x, y, 24, 20))
         .unwrap_or(false);
     (proxy_band, hit_editor, hit_band)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_normalize_click_point_to_display(
+    point: (i32, i32),
+    display_origin: (i32, i32),
+    display_scale: f64,
+) -> Option<(i32, i32)> {
+    let scale = if display_scale.is_finite() && display_scale > 0.0 {
+        display_scale
+    } else {
+        1.0
+    };
+    Some((
+        ((point.0 - display_origin.0) as f64 * scale).round() as i32,
+        ((point.1 - display_origin.1) as f64 * scale).round() as i32,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_normalize_rect_to_display(
+    rect: (i32, i32, i32, i32),
+    display_origin: (i32, i32),
+    display_scale: f64,
+) -> Option<(i32, i32, i32, i32)> {
+    if !editable_rect_has_area(rect) {
+        return Some(rect);
+    }
+    let scale = if display_scale.is_finite() && display_scale > 0.0 {
+        display_scale
+    } else {
+        1.0
+    };
+    Some((
+        ((rect.0 - display_origin.0) as f64 * scale).round() as i32,
+        ((rect.1 - display_origin.1) as f64 * scale).round() as i32,
+        (rect.2 as f64 * scale).round() as i32,
+        (rect.3 as f64 * scale).round() as i32,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_display_for_hint<'a>(
+    displays: &'a [DisplayInfo],
+    hint: &crate::platform::EditableFocusHintInfo,
+) -> Option<&'a DisplayInfo> {
+    displays.get(hint.display_idx.max(0) as usize)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_normalize_point_for_hint(
+    displays: &[DisplayInfo],
+    hint: &crate::platform::EditableFocusHintInfo,
+    point: (i32, i32),
+) -> Option<(i32, i32)> {
+    let display = macos_display_for_hint(displays, hint)?;
+    macos_normalize_click_point_to_display(point, (display.x, display.y), display.scale as f64)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_normalize_window_for_hint(
+    displays: &[DisplayInfo],
+    hint: &crate::platform::EditableFocusHintInfo,
+    window: (i32, i32, i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    let display = macos_display_for_hint(displays, hint)?;
+    macos_normalize_rect_to_display(window, (display.x, display.y), display.scale as f64)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_click_point_hits_hint(
+    click_point: (i32, i32),
+    hint: &crate::platform::EditableFocusHintInfo,
+) -> (bool, bool) {
+    let hit_editor = rect_contains_point_with_margin(hint.editor, click_point.0, click_point.1, 48, 36);
+    let hit_pane = rect_contains_point_with_margin(hint.pane, click_point.0, click_point.1, 28, 28);
+    (hit_editor, hit_pane)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_click_point_hits_current_hint(
+    displays: &[DisplayInfo],
+    intent: &EditableClickIntent,
+    hint: &crate::platform::EditableFocusHintInfo,
+) -> Option<((i32, i32), bool, bool)> {
+    let display = displays.get(hint.display_idx.max(0) as usize)?;
+    let click_point = macos_normalize_click_point_to_display(
+        (intent.x, intent.y),
+        (display.x, display.y),
+        display.scale as f64,
+    )?;
+    let (hit_editor, hit_pane) = macos_click_point_hits_hint(click_point, hint);
+    Some((click_point, hit_editor, hit_pane))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_inset_rect(
+    rect: (i32, i32, i32, i32),
+    inset_x: i32,
+    inset_y: i32,
+) -> Option<(i32, i32, i32, i32)> {
+    let inner = (
+        rect.0 + inset_x,
+        rect.1 + inset_y,
+        rect.2 - inset_x * 2,
+        rect.3 - inset_y * 2,
+    );
+    editable_rect_has_area(inner).then_some(inner)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_build_opaque_click_band(window: (i32, i32, i32, i32)) -> Option<(i32, i32, i32, i32)> {
+    const MACOS_OPAQUE_BAND_LEFT_PCT: i32 = 22;
+    const MACOS_OPAQUE_BAND_TOP_PCT: i32 = 78;
+
+    let content = macos_inset_rect(window, 12, 12)?;
+    let band_left = content.0 + content.2 * MACOS_OPAQUE_BAND_LEFT_PCT / 100;
+    let band_top = content.1 + content.3 * MACOS_OPAQUE_BAND_TOP_PCT / 100;
+    let band_right = content.0 + content.2 - 8;
+    let band_bottom = content.1 + content.3 - 8;
+    let band = (
+        band_left,
+        band_top,
+        (band_right - band_left).max(0),
+        (band_bottom - band_top).max(0),
+    );
+    editable_rect_has_area(band).then_some(band)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_synth_editor_rect_from_click(
+    window: (i32, i32, i32, i32),
+    click_point: (i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    const MACOS_OPAQUE_SYNTH_EDITOR_WIDTH: i32 = 240;
+    const MACOS_OPAQUE_SYNTH_EDITOR_HEIGHT: i32 = 40;
+
+    if !editable_rect_has_area(window)
+        || !rect_contains_point_with_margin(window, click_point.0, click_point.1, 0, 0)
+    {
+        return None;
+    }
+
+    let content = macos_inset_rect(window, 8, 8)?;
+    let target_width = MACOS_OPAQUE_SYNTH_EDITOR_WIDTH.min(content.2);
+    let target_height = MACOS_OPAQUE_SYNTH_EDITOR_HEIGHT.min(content.3);
+    let max_left = content.0 + content.2 - target_width;
+    let max_top = content.1 + content.3 - target_height;
+
+    Some((
+        (click_point.0 - target_width / 2).clamp(content.0, max_left),
+        (click_point.1 - target_height / 2).clamp(content.1, max_top),
+        target_width,
+        target_height,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_build_opaque_click_fallback_hint(
+    displays: &[DisplayInfo],
+    intent: &EditableClickIntent,
+    hint: &crate::platform::EditableFocusHintInfo,
+) -> Option<(crate::platform::EditableFocusHintInfo, (i32, i32), (i32, i32, i32, i32))> {
+    if hint.editable
+        || (hint.platform_flags & crate::platform::EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE) == 0
+        || !editable_rect_has_area(hint.window)
+    {
+        return None;
+    }
+
+    let display = displays.get(hint.display_idx.max(0) as usize)?;
+    let click_point = macos_normalize_click_point_to_display(
+        (intent.x, intent.y),
+        (display.x, display.y),
+        display.scale as f64,
+    )?;
+    if !rect_contains_point_with_margin(hint.window, click_point.0, click_point.1, 0, 0) {
+        return None;
+    }
+
+    let pane = macos_build_opaque_click_band(hint.window)?;
+    if !rect_contains_point_with_margin(pane, click_point.0, click_point.1, 28, 20) {
+        return None;
+    }
+
+    let editor = macos_synth_editor_rect_from_click(pane, click_point)
+        .or_else(|| macos_synth_editor_rect_from_click(hint.window, click_point))?;
+    let caret_height = (editor.3 - 8).clamp(18, editor.3.max(18));
+    let caret_x_min = editor.0 + 1;
+    let caret_x_max = (editor.0 + editor.2 - 3).max(caret_x_min);
+    let caret_y_min = editor.1 + 1;
+    let caret_y_max = (editor.1 + editor.3 - caret_height - 2).max(caret_y_min);
+    let caret = (
+        click_point.0.clamp(caret_x_min, caret_x_max),
+        (click_point.1 - caret_height / 2).clamp(caret_y_min, caret_y_max),
+        2,
+        caret_height,
+    );
+    let content_kind = if hint.content_kind > 0 {
+        hint.content_kind
+    } else {
+        2
+    };
+
+    Some((
+        crate::platform::EditableFocusHintInfo {
+            editable: true,
+            caret,
+            editor,
+            window: hint.window,
+            pane,
+            display_idx: hint.display_idx,
+            content_kind,
+            foreground_hwnd: hint.foreground_hwnd,
+            platform_flags: hint.platform_flags,
+        },
+        click_point,
+        pane,
+    ))
+}
+
+#[cfg(target_os = "macos")]
+fn log_macos_click_diagnostic(
+    intent: &EditableClickIntent,
+    hint: &crate::platform::EditableFocusHintInfo,
+) {
+    let cursor = crate::platform::macos::get_cursor_pos();
+    let cursor_window = cursor
+        .and_then(|(cursor_x, cursor_y)| crate::platform::macos::get_window_rect_for_point(cursor_x, cursor_y));
+    let click_in_window = rect_contains_point_with_margin(intent.window, intent.x, intent.y, 0, 0);
+    let cursor_in_window = cursor
+        .map(|(cursor_x, cursor_y)| {
+            rect_contains_point_with_margin(intent.window, cursor_x, cursor_y, 0, 0)
+        })
+        .unwrap_or(false);
+    let cursor_delta = cursor.map(|(cursor_x, cursor_y)| (cursor_x - intent.x, cursor_y - intent.y));
+    let cursor_window_matches = cursor_window
+        .map(|window| editable_windows_match(window, intent.window))
+        .unwrap_or(false);
+    let hint_window_matches = editable_windows_match(hint.window, intent.window);
+
+    log::debug!(
+        "editable_focus macOS click diagnostic: seq={} click=({}, {}) click_window={:?} click_in_window={} hint_editable={} hint_kind={} hint_window={:?} hint_window_matches={} cursor={:?} cursor_delta={:?} cursor_in_click_window={} cursor_window={:?} cursor_window_matches={}",
+        intent.seq,
+        intent.x,
+        intent.y,
+        intent.window,
+        click_in_window,
+        hint.editable,
+        hint.content_kind,
+        hint.window,
+        hint_window_matches,
+        cursor,
+        cursor_delta,
+        cursor_in_window,
+        cursor_window,
+        cursor_window_matches,
+    );
 }
 
 fn take_recent_editable_click_intent() -> Option<EditableClickIntent> {
@@ -690,23 +961,37 @@ fn get_recent_editable_click_window(evt: &MouseEvent) -> Option<(i32, i32, i32, 
 fn record_recent_editable_click_intent(evt: &MouseEvent, conn: i32, simulate: bool) {
     let seq = NEXT_EDITABLE_CLICK_SEQ.fetch_add(1, Ordering::Relaxed);
     if let Some(window) = get_recent_editable_click_window(evt) {
-        *RECENT_EDITABLE_CLICK_INTENT.lock().unwrap() = Some(EditableClickIntent {
-            seq,
-            window,
-            x: evt.x,
-            y: evt.y,
-            created_at: Instant::now(),
-        });
-        log::debug!(
-            "editable_focus arm click: seq={} conn={} simulate={} point=({}, {}) window={:?}",
-            seq,
-            conn,
-            simulate,
-            evt.x,
-            evt.y,
-            window
-        );
+        if editable_click_window_contains_point(window, evt.x, evt.y) {
+            *RECENT_EDITABLE_CLICK_INTENT.lock().unwrap() = Some(EditableClickIntent {
+                seq,
+                window,
+                x: evt.x,
+                y: evt.y,
+                created_at: Instant::now(),
+            });
+            log::debug!(
+                "editable_focus arm click: seq={} conn={} simulate={} point=({}, {}) window={:?}",
+                seq,
+                conn,
+                simulate,
+                evt.x,
+                evt.y,
+                window
+            );
+        } else {
+            *RECENT_EDITABLE_CLICK_INTENT.lock().unwrap() = None;
+            log::debug!(
+                "editable_focus arm miss: seq={} conn={} simulate={} point=({}, {}) reason=window-mismatch window={:?}",
+                seq,
+                conn,
+                simulate,
+                evt.x,
+                evt.y,
+                window,
+            );
+        }
     } else {
+        *RECENT_EDITABLE_CLICK_INTENT.lock().unwrap() = None;
         log::debug!(
             "editable_focus arm miss: seq={} conn={} simulate={} point=({}, {}) reason=no-foreground-window",
             seq,
@@ -813,6 +1098,7 @@ mod tests {
             display_idx: 0,
             content_kind: if editable { 2 } else { 0 },
             foreground_hwnd,
+            platform_flags: 0,
         }
     }
 
@@ -1138,13 +1424,34 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
     }
 
     log::info!(
-        "editable_focus CHANGED: editable={}, kind={}, rev={}, window={:?}, editor={:?}, pane={:?}",
+        "editable_focus CHANGED: editable={}, kind={}, rev={}, display_idx={}, display_wh={:?}, display_origin={:?}, display_scale={:.2}, window={:?}, editor={:?}, pane={:?}, caret={:?}",
         hint_info.editable,
         hint_info.content_kind,
         state.revision + 1,
+        hint_info.display_idx,
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| (display.width, display.height))
+            .unwrap_or((0, 0)),
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| (display.x, display.y))
+            .unwrap_or((0, 0)),
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| {
+                let scale = display.scale as f64;
+                if scale.is_finite() && scale > 0.0 {
+                    scale
+                } else {
+                    1.0
+                }
+            })
+            .unwrap_or(1.0),
         hint_info.window,
         hint_info.editor,
         hint_info.pane,
+        hint_info.caret,
     );
 
     state.idle_counter = 0;
@@ -1178,17 +1485,24 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
 
     if !hint_info.editable {
         if let Some(intent) = recent_click_intent.as_ref() {
+            let normalized_intent_window =
+                macos_normalize_window_for_hint(&displays, &hint_info, intent.window)
+                    .unwrap_or(intent.window);
+            let normalized_intent_point =
+                macos_normalize_point_for_hint(&displays, &hint_info, (intent.x, intent.y))
+                    .unwrap_or((intent.x, intent.y));
             if let Some((anchor_window, anchor_source)) =
-                resolve_proxy_anchor_window(hint_info.window, intent.window)
+                resolve_proxy_anchor_window(hint_info.window, normalized_intent_window)
             {
                 if let Some((candidate_hint, candidate_source, candidate_age_ms)) =
                     find_recent_editable_hint_for_window(state, anchor_window)
                 {
-                    let current_window_match = editable_windows_match(intent.window, anchor_window);
+                    let current_window_match =
+                        editable_windows_match(normalized_intent_window, anchor_window);
                     let candidate_window_match =
                         editable_windows_match(candidate_hint.window, anchor_window);
                     let (proxy_band, hit_editor, hit_band) =
-                        proxy_hit_test(&candidate_hint, intent.x, intent.y);
+                        proxy_hit_test(&candidate_hint, normalized_intent_point.0, normalized_intent_point.1);
                     if current_window_match && candidate_window_match && hit_editor {
                         log::debug!(
                             "editable_focus macOS proxy reuse: seq={} anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?}",
@@ -1248,8 +1562,34 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
                     intent.window,
                 );
             }
+
+            if !hint_info.editable {
+                if let Some((fallback_hint, click_point, fallback_pane)) =
+                    macos_build_opaque_click_fallback_hint(&displays, intent, &hint_info)
+                {
+                    log::info!(
+                        "editable_focus macOS opaque AX fallback: seq={} point_raw=({}, {}) point={:?} window={:?} pane={:?} editor={:?} flags=0x{:x}",
+                        intent.seq,
+                        intent.x,
+                        intent.y,
+                        click_point,
+                        fallback_hint.window,
+                        fallback_pane,
+                        fallback_hint.editor,
+                        fallback_hint.platform_flags,
+                    );
+                    hint_info = fallback_hint;
+                }
+            }
         } else if let Some((cursor_x, cursor_y)) = crate::get_cursor_pos() {
+            let cursor_point = macos_normalize_point_for_hint(
+                &displays,
+                &hint_info,
+                (cursor_x, cursor_y),
+            )
+            .unwrap_or((cursor_x, cursor_y));
             let cursor_window = crate::platform::macos::get_window_rect_for_point(cursor_x, cursor_y)
+                .and_then(|window| macos_normalize_window_for_hint(&displays, &hint_info, window))
                 .unwrap_or(hint_info.window);
             if let Some((anchor_window, anchor_source)) =
                 resolve_proxy_anchor_window(hint_info.window, cursor_window)
@@ -1261,7 +1601,7 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
                         editable_windows_match(candidate_hint.window, anchor_window);
                     let cursor_window_match = editable_windows_match(cursor_window, anchor_window);
                     let (proxy_band, hit_editor, hit_band) =
-                        proxy_hit_test(&candidate_hint, cursor_x, cursor_y);
+                        proxy_hit_test(&candidate_hint, cursor_point.0, cursor_point.1);
                     if cursor_window_match && candidate_window_match && hit_editor {
                         log::debug!(
                             "editable_focus macOS cursor proxy reuse: anchor={} source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?}",
@@ -1315,11 +1655,34 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
                 hint_info.editor,
                 hint_info.pane,
             );
+            if !hint_info.editable {
+                log_macos_click_diagnostic(intent, &hint_info);
+            }
             state.last_observed_click_seq = intent.seq;
         }
     }
 
+    let click_target_hit = recent_click_intent.as_ref().and_then(|intent| {
+        macos_click_point_hits_current_hint(&displays, intent, &hint_info)
+            .map(|(point, hit_editor, hit_pane)| (intent, point, hit_editor, hit_pane))
+    });
+
     if !hint_changed(&state.last_hint, &hint_info) {
+        if let Some((intent, point, hit_editor, hit_pane)) = click_target_hit.as_ref() {
+            if !*hit_editor && !*hit_pane {
+                log::debug!(
+                    "editable_focus macOS suppress refresh during click: seq={} age_ms={} point={:?} editable={} kind={} editor={:?} pane={:?}",
+                    intent.seq,
+                    intent.created_at.elapsed().as_millis(),
+                    point,
+                    hint_info.editable,
+                    hint_info.content_kind,
+                    hint_info.editor,
+                    hint_info.pane,
+                );
+                return Ok(());
+            }
+        }
         if hint_info.editable && macos_editable_focus_refresh_due(state.idle_counter) {
             log::debug!(
                 "editable_focus REFRESH: editable=true, kind={}, rev={}",
@@ -1331,14 +1694,54 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
         return Ok(());
     }
 
+    if let Some((intent, point, hit_editor, hit_pane)) = click_target_hit.as_ref() {
+        if !*hit_editor
+            && !*hit_pane
+            && intent.created_at.elapsed() <= Duration::from_millis(MACOS_CLICK_TARGET_SETTLE_MS)
+        {
+            log::debug!(
+                "editable_focus macOS defer changed during click: seq={} age_ms={} point={:?} editable={} kind={} editor={:?} pane={:?}",
+                intent.seq,
+                intent.created_at.elapsed().as_millis(),
+                point,
+                hint_info.editable,
+                hint_info.content_kind,
+                hint_info.editor,
+                hint_info.pane,
+            );
+            return Ok(());
+        }
+    }
+
     log::info!(
-        "editable_focus CHANGED: editable={}, kind={}, rev={}, window={:?}, editor={:?}, pane={:?}",
+        "editable_focus CHANGED: editable={}, kind={}, rev={}, display_idx={}, display_wh={:?}, display_origin={:?}, display_scale={:.2}, window={:?}, editor={:?}, pane={:?}, caret={:?}",
         hint_info.editable,
         hint_info.content_kind,
         state.revision + 1,
+        hint_info.display_idx,
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| (display.width, display.height))
+            .unwrap_or((0, 0)),
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| (display.x, display.y))
+            .unwrap_or((0, 0)),
+        displays
+            .get(hint_info.display_idx.max(0) as usize)
+            .map(|display| {
+                let scale = display.scale as f64;
+                if scale.is_finite() && scale > 0.0 {
+                    scale
+                } else {
+                    1.0
+                }
+            })
+            .unwrap_or(1.0),
         hint_info.window,
         hint_info.editor,
         hint_info.pane,
+        hint_info.caret,
     );
 
     state.idle_counter = 0;
@@ -1359,7 +1762,16 @@ fn run_editable_focus(_sp: EmptyExtraFieldService, _state: &mut StateEditableFoc
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_editable_focus_tests {
-    use super::{macos_editable_focus_poll_due, macos_editable_focus_refresh_due};
+    use super::{
+        editable_click_window_contains_point, macos_build_opaque_click_band,
+        macos_build_opaque_click_fallback_hint, macos_click_point_hits_hint,
+        macos_editable_focus_poll_due, macos_editable_focus_refresh_due,
+        macos_normalize_click_point_to_display, macos_normalize_rect_to_display,
+        rect_contains_point_with_margin, EditableClickIntent,
+    };
+    use crate::platform::EditableFocusHintInfo;
+    use hbb_common::message_proto::DisplayInfo;
+    use std::time::Instant;
 
     #[test]
     fn active_focus_polls_every_tick() {
@@ -1384,6 +1796,122 @@ mod macos_editable_focus_tests {
         assert!(!macos_editable_focus_refresh_due(4));
         assert!(macos_editable_focus_refresh_due(5));
         assert!(macos_editable_focus_refresh_due(10));
+    }
+
+    #[test]
+    fn macos_click_point_normalizes_with_scale() {
+        assert_eq!(
+            macos_normalize_click_point_to_display((626, 382), (0, 0), 2.0),
+            Some((1252, 764))
+        );
+    }
+
+    #[test]
+    fn macos_window_rect_normalizes_with_scale() {
+        assert_eq!(
+            macos_normalize_rect_to_display((76, 113, 880, 640), (0, 0), 2.0),
+            Some((152, 226, 1760, 1280))
+        );
+    }
+
+    #[test]
+    fn macos_click_point_hit_distinguishes_regions() {
+        let middle = EditableFocusHintInfo {
+            editable: true,
+            editor: (344, 742, 1230, 42),
+            pane: (200, 244, 1582, 842),
+            ..Default::default()
+        };
+        let bottom = EditableFocusHintInfo {
+            editable: true,
+            editor: (772, 1728, 14, 28),
+            pane: (240, 1224, 1246, 532),
+            content_kind: 1,
+            ..Default::default()
+        };
+        let right = EditableFocusHintInfo {
+            editable: true,
+            editor: (1830, 1566, 992, 40),
+            pane: (1830, 1502, 1024, 128),
+            ..Default::default()
+        };
+
+        assert_eq!(macos_click_point_hits_hint((1252, 764), &right), (false, false));
+        assert_eq!(macos_click_point_hits_hint((1100, 1718), &middle), (false, false));
+        assert_eq!(macos_click_point_hits_hint((1094, 1724), &bottom), (false, true));
+        assert_eq!(macos_click_point_hits_hint((2496, 1568), &right), (true, true));
+    }
+
+    #[test]
+    fn click_window_arm_rejects_mismatched_points() {
+        assert!(editable_click_window_contains_point((76, 113, 880, 640), 720, 690));
+        assert!(editable_click_window_contains_point((76, 113, 880, 640), 858, 426));
+        assert!(!editable_click_window_contains_point((76, 113, 880, 640), 316, 890));
+        assert!(!editable_click_window_contains_point((76, 113, 880, 640), 28, 422));
+    }
+
+    #[test]
+    fn macos_opaque_click_band_targets_lower_content() {
+        let band = macos_build_opaque_click_band((76, 113, 880, 640)).unwrap();
+        assert!(rect_contains_point_with_margin(band, 456, 669, 0, 0));
+        assert!(!rect_contains_point_with_margin(band, 164, 669, 0, 0));
+        assert!(!rect_contains_point_with_margin(band, 444, 496, 0, 0));
+        assert!(!rect_contains_point_with_margin(band, 683, 515, 0, 0));
+    }
+
+    #[test]
+    fn macos_opaque_click_fallback_requires_flag_and_band_hit() {
+        let displays = vec![DisplayInfo {
+            x: 0,
+            y: 0,
+            width: 1600,
+            height: 900,
+            scale: 1.0,
+            ..Default::default()
+        }];
+        let base_hint = EditableFocusHintInfo {
+            editable: false,
+            window: (76, 113, 880, 640),
+            pane: (76, 113, 880, 640),
+            display_idx: 0,
+            foreground_hwnd: 42,
+            platform_flags: crate::platform::EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE,
+            ..Default::default()
+        };
+        let hit_intent = EditableClickIntent {
+            seq: 1,
+            window: (76, 113, 880, 640),
+            x: 438,
+            y: 642,
+            created_at: Instant::now(),
+        };
+        let (fallback_hint, click_point, pane) =
+            macos_build_opaque_click_fallback_hint(&displays, &hit_intent, &base_hint).unwrap();
+        assert!(fallback_hint.editable);
+        assert_eq!(click_point, (438, 642));
+        assert_eq!(fallback_hint.pane, pane);
+        assert!(rect_contains_point_with_margin(
+            fallback_hint.editor,
+            click_point.0,
+            click_point.1,
+            0,
+            0,
+        ));
+
+        let miss_intent = EditableClickIntent {
+            seq: 2,
+            window: (76, 113, 880, 640),
+            x: 180,
+            y: 320,
+            created_at: Instant::now(),
+        };
+        assert!(macos_build_opaque_click_fallback_hint(&displays, &miss_intent, &base_hint).is_none());
+
+        let no_flag_hint = EditableFocusHintInfo {
+            platform_flags: 0,
+            ..base_hint
+        };
+        assert!(macos_build_opaque_click_fallback_hint(&displays, &hit_intent, &no_flag_hint).is_none());
     }
 }
 
