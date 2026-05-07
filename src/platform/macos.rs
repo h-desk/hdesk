@@ -41,13 +41,26 @@ use std::{
 
 // macOS boolean_t is defined as `int` in <mach/boolean.h>
 type BooleanT = hbb_common::libc::c_int;
+type CFIndex = isize;
 type AXUIElementRef = *const c_void;
 type AXValueRef = *const c_void;
 type AXError = i32;
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+struct CFRange {
+    location: CFIndex,
+    length: CFIndex,
+}
+
 const AX_ERROR_SUCCESS: AXError = 0;
+const AX_ERROR_NOT_IMPLEMENTED: AXError = -25208;
 const AX_VALUE_CGPOINT_TYPE: u32 = 1;
 const AX_VALUE_CGSIZE_TYPE: u32 = 2;
+const AX_VALUE_CGRECT_TYPE: u32 = 3;
+const AX_VALUE_CFRANGE_TYPE: u32 = 4;
+
+pub const EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE: u32 = 1 << 0;
 
 static PRIVILEGES_SCRIPTS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/src/platform/privileges_scripts");
@@ -66,6 +79,8 @@ pub struct EditableFocusHintInfo {
     pub content_kind: i32,
     /// Local-only stable window identity for change detection. Not sent over wire.
     pub foreground_hwnd: isize,
+    /// Local-only platform diagnostics for editable-focus fallbacks. Not sent over wire.
+    pub platform_flags: u32,
 }
 
 #[inline]
@@ -86,12 +101,26 @@ static CG_CURSOR_MUTEX: Mutex<()> = Mutex::new(());
 
 extern "C" {
     fn AXUIElementCreateApplication(pid: i32) -> AXUIElementRef;
+    fn AXUIElementCreateSystemWide() -> AXUIElementRef;
     fn AXUIElementCopyAttributeValue(
         element: AXUIElementRef,
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> AXError;
+    fn AXUIElementCopyElementAtPosition(
+        application: AXUIElementRef,
+        x: f32,
+        y: f32,
+        element: *mut AXUIElementRef,
+    ) -> AXError;
+    fn AXUIElementCopyParameterizedAttributeValue(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        parameter: CFTypeRef,
+        value: *mut CFTypeRef,
+    ) -> AXError;
     fn AXValueGetType(value: AXValueRef) -> u32;
+    fn AXValueCreate(ax_type: u32, value_ptr: *const c_void) -> AXValueRef;
     fn AXValueGetValue(value: AXValueRef, ax_type: u32, value_ptr: *mut c_void) -> u8;
     fn CFBooleanGetValue(boolean: *const c_void) -> u8;
     fn CGSCurrentCursorSeed() -> i32;
@@ -236,6 +265,23 @@ fn rect_center(rect: (i32, i32, i32, i32)) -> Option<(i32, i32)> {
     Some((rect.0 + rect.2 / 2, rect.1 + rect.3 / 2))
 }
 
+fn caret_rect_from_range_bounds(
+    bounds: (i32, i32, i32, i32),
+    editor: (i32, i32, i32, i32),
+    window: (i32, i32, i32, i32),
+) -> Option<(i32, i32, i32, i32)> {
+    if !rect_has_area(editor) || !rect_has_area(window) {
+        return None;
+    }
+    let raw = (
+        bounds.0,
+        bounds.1,
+        bounds.2.clamp(2, 8),
+        bounds.3.max(4),
+    );
+    rect_intersection(raw, editor).and_then(|caret| rect_intersection(caret, window))
+}
+
 fn point_in_display(display: &DisplayInfo, x: i32, y: i32) -> bool {
     let right = display.x + display.width;
     let bottom = display.y + display.height;
@@ -248,6 +294,43 @@ fn find_display_idx_for_point(displays: &[DisplayInfo], x: i32, y: i32) -> Optio
         .position(|display| point_in_display(display, x, y))
 }
 
+pub(crate) fn editable_focus_display_scale(display: &DisplayInfo) -> f64 {
+    let parsed_scale = display
+        .name
+        .parse::<u32>()
+        .ok()
+        .map(|display_id| unsafe { BackingScaleFactor(display_id) as f64 })
+        .filter(|scale| scale.is_finite() && *scale > 1.0);
+    let display_scale = display
+        .scale
+        .is_finite()
+        .then_some(display.scale as f64)
+        .filter(|scale| *scale > 1.0);
+    parsed_scale.or(display_scale).unwrap_or(1.0)
+}
+
+fn normalize_rect_to_display_with_scale(
+    rect: (i32, i32, i32, i32),
+    display_x: i32,
+    display_y: i32,
+    scale: f64,
+) -> (i32, i32, i32, i32) {
+    if !rect_has_area(rect) {
+        return rect;
+    }
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (
+        ((rect.0 - display_x) as f64 * scale).round() as i32,
+        ((rect.1 - display_y) as f64 * scale).round() as i32,
+        (rect.2 as f64 * scale).round() as i32,
+        (rect.3 as f64 * scale).round() as i32,
+    )
+}
+
 fn normalize_rect_to_display(
     rect: (i32, i32, i32, i32),
     display: &DisplayInfo,
@@ -255,13 +338,19 @@ fn normalize_rect_to_display(
     if !rect_has_area(rect) {
         return rect;
     }
-    (rect.0 - display.x, rect.1 - display.y, rect.2, rect.3)
+    normalize_rect_to_display_with_scale(
+        rect,
+        display.x,
+        display.y,
+        editable_focus_display_scale(display),
+    )
 }
 
 fn normalize_editable_focus_hint_to_display(
     displays: &[DisplayInfo],
     mut hint: EditableFocusHintInfo,
 ) -> EditableFocusHintInfo {
+    let raw_hint = hint.clone();
     let display_idx = rect_center(hint.editor)
         .and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy))
         .or_else(|| rect_center(hint.pane).and_then(|(cx, cy)| find_display_idx_for_point(displays, cx, cy)))
@@ -274,12 +363,32 @@ fn normalize_editable_focus_hint_to_display(
     let Some(display) = displays.get(display_idx) else {
         return hint;
     };
+    let scale = editable_focus_display_scale(display);
 
     hint.caret = normalize_rect_to_display(hint.caret, display);
     hint.editor = normalize_rect_to_display(hint.editor, display);
     hint.window = normalize_rect_to_display(hint.window, display);
     hint.pane = normalize_rect_to_display(hint.pane, display);
     hint.display_idx = display_idx as i32;
+    if hint.editable {
+        log::debug!(
+            "editable_focus macOS normalize: display={} raw_wh={}x{} origin=({}, {}) scale={:.2} raw_editor={:?} raw_pane={:?} raw_window={:?} raw_caret={:?} -> editor={:?} pane={:?} window={:?} caret={:?}",
+            display.name,
+            display.width,
+            display.height,
+            display.x,
+            display.y,
+            scale,
+            raw_hint.editor,
+            raw_hint.pane,
+            raw_hint.window,
+            raw_hint.caret,
+            hint.editor,
+            hint.pane,
+            hint.window,
+            hint.caret,
+        );
+    }
     hint
 }
 
@@ -391,6 +500,23 @@ fn pane_candidate_role_rank(role: &str) -> i32 {
     }
 }
 
+fn ax_role_code_like(role: &str, subrole: Option<&str>) -> bool {
+    let role = role.to_ascii_lowercase();
+    let subrole = subrole.unwrap_or_default().to_ascii_lowercase();
+    role.contains("code")
+        || subrole.contains("code")
+        || subrole.contains("editor")
+        || subrole.contains("source")
+}
+
+fn ax_text_surface_content_kind(role: &str, subrole: Option<&str>) -> i32 {
+    if ax_role_code_like(role, subrole) || role.eq_ignore_ascii_case("AXDocument") {
+        3
+    } else {
+        2
+    }
+}
+
 fn classify_ax_editable_role(
     role: &str,
     subrole: Option<&str>,
@@ -398,10 +524,7 @@ fn classify_ax_editable_role(
 ) -> (bool, i32) {
     let role = role.to_ascii_lowercase();
     let subrole = subrole.unwrap_or_default().to_ascii_lowercase();
-    let code_like = role.contains("code")
-        || subrole.contains("code")
-        || subrole.contains("editor")
-        || subrole.contains("source");
+    let code_like = ax_role_code_like(&role, Some(&subrole));
 
     if editable_attr == Some(false) {
         return (false, 0);
@@ -427,6 +550,330 @@ fn classify_ax_editable_role(
         return (true, 2);
     }
     (false, 0)
+}
+
+fn allow_ax_text_range_fallback(
+    role: &str,
+    subrole: Option<&str>,
+    editable_attr: Option<bool>,
+) -> bool {
+    if editable_attr == Some(false) {
+        return false;
+    }
+
+    let role = role.to_ascii_lowercase();
+    let subrole = subrole.unwrap_or_default().to_ascii_lowercase();
+
+    if ax_role_code_like(&role, Some(&subrole)) {
+        return true;
+    }
+
+    role == "axtextfield"
+        || role == "axsearchfield"
+        || role == "axcombobox"
+        || role == "axtextarea"
+        || subrole.contains("secure")
+        || (matches!(role.as_str(), "axdocument" | "axwebarea") && editable_attr == Some(true))
+}
+
+unsafe fn ax_resolve_editable_element(
+    focused_element: AXUIElementRef,
+) -> Option<(AXUIElementRef, String, Option<String>, Option<bool>, i32, usize)> {
+    if focused_element.is_null() {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut current = focused_element;
+    CFRetain(current as *const c_void);
+
+    loop {
+        let role = ax_copy_attribute_string(current, "AXRole").unwrap_or_default();
+        let subrole = ax_copy_attribute_string(current, "AXSubrole");
+        let editable_attr = ax_copy_attribute_bool(current, "AXEditable");
+        let (editable, content_kind) =
+            classify_ax_editable_role(&role, subrole.as_deref(), editable_attr);
+        if editable {
+            return Some((current, role, subrole, editable_attr, content_kind, depth));
+        }
+
+        if depth >= 6 {
+            break;
+        }
+
+        let next = ax_copy_attribute_element(current, "AXParent");
+        let Some(next) = next else {
+            break;
+        };
+        CFRelease(current as *const c_void);
+        current = next;
+        depth += 1;
+    }
+
+    CFRelease(current as *const c_void);
+    None
+}
+
+unsafe fn ax_resolve_text_range_element(
+    focused_element: AXUIElementRef,
+) -> Option<(AXUIElementRef, String, Option<String>, (i32, i32, i32, i32), i32, usize)> {
+    if focused_element.is_null() {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut current = focused_element;
+    CFRetain(current as *const c_void);
+
+    loop {
+        let role = ax_copy_attribute_string(current, "AXRole").unwrap_or_default();
+        let subrole = ax_copy_attribute_string(current, "AXSubrole");
+        let editable_attr = ax_copy_attribute_bool(current, "AXEditable");
+        if allow_ax_text_range_fallback(&role, subrole.as_deref(), editable_attr) {
+            if let Some(bounds) = ax_selected_text_range_bounds(current) {
+                let content_kind = ax_text_surface_content_kind(&role, subrole.as_deref());
+                return Some((current, role, subrole, bounds, content_kind, depth));
+            }
+        }
+
+        if depth >= 6 {
+            break;
+        }
+
+        let next = ax_copy_attribute_element(current, "AXParent");
+        let Some(next) = next else {
+            break;
+        };
+        CFRelease(current as *const c_void);
+        current = next;
+        depth += 1;
+    }
+
+    CFRelease(current as *const c_void);
+    None
+}
+
+unsafe fn ax_resolve_code_surface_element(
+    focused_element: AXUIElementRef,
+) -> Option<(AXUIElementRef, String, Option<String>, Option<(i32, i32, i32, i32)>, usize)> {
+    if focused_element.is_null() {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut current = focused_element;
+    CFRetain(current as *const c_void);
+
+    loop {
+        let role = ax_copy_attribute_string(current, "AXRole").unwrap_or_default();
+        let subrole = ax_copy_attribute_string(current, "AXSubrole");
+        if ax_role_code_like(&role, subrole.as_deref()) || role.eq_ignore_ascii_case("AXDocument") {
+            let rect = ax_element_rect(current);
+            return Some((current, role, subrole, rect, depth));
+        }
+
+        if depth >= 6 {
+            break;
+        }
+
+        let next = ax_copy_attribute_element(current, "AXParent");
+        let Some(next) = next else {
+            break;
+        };
+        CFRelease(current as *const c_void);
+        current = next;
+        depth += 1;
+    }
+
+    CFRelease(current as *const c_void);
+    None
+}
+
+unsafe fn nsstring_to_string(value: id) -> Option<String> {
+    if value == nil {
+        return None;
+    }
+    let c_str: *const std::os::raw::c_char = msg_send![value, UTF8String];
+    if c_str.is_null() {
+        return None;
+    }
+    Some(std::ffi::CStr::from_ptr(c_str).to_string_lossy().to_string())
+}
+
+unsafe fn frontmost_app_identity(frontmost_pid: i32) -> (Option<String>, Option<String>) {
+    let app: id = msg_send![
+        class!(NSRunningApplication),
+        runningApplicationWithProcessIdentifier: frontmost_pid
+    ];
+    if app == nil {
+        return (None, None);
+    }
+    let name: id = msg_send![app, localizedName];
+    let bundle_id: id = msg_send![app, bundleIdentifier];
+    (nsstring_to_string(name), nsstring_to_string(bundle_id))
+}
+
+enum AxFocusedElementLookup {
+    Found(AXUIElementRef, &'static str),
+    Unavailable { platform_flags: u32 },
+}
+
+unsafe fn ax_copy_focused_element_for_app(
+    app: AXUIElementRef,
+    frontmost_pid: i32,
+) -> AxFocusedElementLookup {
+    if let Some(focused_element) = ax_copy_attribute_element(app, "AXFocusedUIElement") {
+        return AxFocusedElementLookup::Found(focused_element, "app");
+    }
+
+    let mut platform_flags = 0u32;
+
+    if let Some((cursor_x, cursor_y)) = get_cursor_pos() {
+        let (app_name, bundle_id) = frontmost_app_identity(frontmost_pid);
+        let (hit_element, point_err) = ax_copy_element_at_position_with_status(app, cursor_x, cursor_y);
+        if let Some(hit_element) = hit_element {
+            log::debug!(
+                "editable_focus macOS focused-element fallback: pid={} app={:?} bundle={:?} source=point-app cursor=({}, {})",
+                frontmost_pid,
+                app_name,
+                bundle_id,
+                cursor_x,
+                cursor_y,
+            );
+            return AxFocusedElementLookup::Found(hit_element, "point-app");
+        }
+        if point_err == AX_ERROR_NOT_IMPLEMENTED {
+            platform_flags |= EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE;
+        }
+        log::debug!(
+            "editable_focus macOS point miss: pid={} app={:?} bundle={:?} source=point-app cursor=({}, {}) err={}",
+            frontmost_pid,
+            app_name,
+            bundle_id,
+            cursor_x,
+            cursor_y,
+            point_err,
+        );
+    }
+
+    let system = AXUIElementCreateSystemWide();
+    if !system.is_null() {
+        let focused_element = ax_copy_attribute_element(system, "AXFocusedUIElement");
+        if let Some(focused_element) = focused_element {
+            CFRelease(system as *const c_void);
+            let (app_name, bundle_id) = frontmost_app_identity(frontmost_pid);
+            log::debug!(
+                "editable_focus macOS focused-element fallback: pid={} app={:?} bundle={:?} source=system",
+                frontmost_pid,
+                app_name,
+                bundle_id,
+            );
+            return AxFocusedElementLookup::Found(focused_element, "system");
+        }
+
+        if let Some((cursor_x, cursor_y)) = get_cursor_pos() {
+            let (app_name, bundle_id) = frontmost_app_identity(frontmost_pid);
+            let (hit_element, point_err) =
+                ax_copy_element_at_position_with_status(system, cursor_x, cursor_y);
+            if let Some(hit_element) = hit_element {
+                CFRelease(system as *const c_void);
+                log::debug!(
+                    "editable_focus macOS focused-element fallback: pid={} app={:?} bundle={:?} source=point-system cursor=({}, {})",
+                    frontmost_pid,
+                    app_name,
+                    bundle_id,
+                    cursor_x,
+                    cursor_y,
+                );
+                return AxFocusedElementLookup::Found(hit_element, "point-system");
+            }
+            if point_err == AX_ERROR_NOT_IMPLEMENTED {
+                platform_flags |= EDITABLE_FOCUS_PLATFORM_FLAG_AX_OPAQUE;
+            }
+            log::debug!(
+                "editable_focus macOS point miss: pid={} app={:?} bundle={:?} source=point-system cursor=({}, {}) err={}",
+                frontmost_pid,
+                app_name,
+                bundle_id,
+                cursor_x,
+                cursor_y,
+                point_err,
+            );
+        }
+
+        CFRelease(system as *const c_void);
+    }
+
+    let (app_name, bundle_id) = frontmost_app_identity(frontmost_pid);
+    log::debug!(
+        "editable_focus macOS focused-element unavailable: pid={} app={:?} bundle={:?}",
+        frontmost_pid,
+        app_name,
+        bundle_id,
+    );
+    AxFocusedElementLookup::Unavailable { platform_flags }
+}
+
+unsafe fn log_ax_focus_chain_on_miss(
+    frontmost_pid: i32,
+    focused_source: &str,
+    focused_element: AXUIElementRef,
+    window: (i32, i32, i32, i32),
+) {
+    let (app_name, bundle_id) = frontmost_app_identity(frontmost_pid);
+    log::debug!(
+        "editable_focus macOS miss: pid={} app={:?} bundle={:?} source={} window={:?}",
+        frontmost_pid,
+        app_name,
+        bundle_id,
+        focused_source,
+        window,
+    );
+
+    let mut depth = 0usize;
+    let mut current = focused_element;
+    CFRetain(current as *const c_void);
+    loop {
+        let role = ax_copy_attribute_string(current, "AXRole").unwrap_or_default();
+        let subrole = ax_copy_attribute_string(current, "AXSubrole");
+        let editable_attr = ax_copy_attribute_bool(current, "AXEditable");
+        let rect = ax_element_rect(current);
+        let selected_range = ax_copy_attribute_range(current, "AXSelectedTextRange");
+        let range_bounds = selected_range.and_then(|selected_range| {
+            ax_copy_parameterized_rect(current, "AXBoundsForRange", selected_range).or_else(|| {
+                (selected_range.length == 0)
+                    .then(|| CFRange {
+                        location: selected_range.location,
+                        length: 1,
+                    })
+                    .and_then(|fallback_range| {
+                        ax_copy_parameterized_rect(current, "AXBoundsForRange", fallback_range)
+                    })
+            })
+        });
+        log::debug!(
+            "editable_focus macOS miss chain: depth={} role={} subrole={:?} editable_attr={:?} rect={:?} selected_range={:?} range_bounds={:?}",
+            depth,
+            role,
+            subrole,
+            editable_attr,
+            rect,
+            selected_range.map(|range| (range.location as i64, range.length as i64)),
+            range_bounds,
+        );
+
+        if depth >= 6 {
+            break;
+        }
+        let next = ax_copy_attribute_element(current, "AXParent");
+        let Some(next) = next else {
+            break;
+        };
+        CFRelease(current as *const c_void);
+        current = next;
+        depth += 1;
+    }
+    CFRelease(current as *const c_void);
 }
 
 unsafe fn ax_copy_attribute_value(
@@ -457,6 +904,28 @@ unsafe fn ax_copy_attribute_element(
     ax_copy_attribute_value(element, attribute).map(|value| value as AXUIElementRef)
 }
 
+unsafe fn ax_copy_element_at_position_with_status(
+    element: AXUIElementRef,
+    x: i32,
+    y: i32,
+) -> (Option<AXUIElementRef>, AXError) {
+    let mut hit: AXUIElementRef = ptr::null();
+    let err = AXUIElementCopyElementAtPosition(element, x as f32, y as f32, &mut hit);
+    if err == AX_ERROR_SUCCESS && !hit.is_null() {
+        (Some(hit), err)
+    } else {
+        (None, err)
+    }
+}
+
+unsafe fn ax_copy_element_at_position(
+    element: AXUIElementRef,
+    x: i32,
+    y: i32,
+) -> Option<AXUIElementRef> {
+    ax_copy_element_at_position_with_status(element, x, y).0
+}
+
 unsafe fn ax_copy_attribute_string(
     element: AXUIElementRef,
     attribute: &str,
@@ -473,6 +942,23 @@ unsafe fn ax_copy_attribute_bool(
     let enabled = CFBooleanGetValue(value as *const c_void) != 0;
     CFRelease(value);
     Some(enabled)
+}
+
+unsafe fn ax_copy_attribute_range(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Option<CFRange> {
+    let value = ax_copy_attribute_value(element, attribute)?;
+    let mut range = CFRange::default();
+    let ok = AXValueGetType(value as AXValueRef) == AX_VALUE_CFRANGE_TYPE
+        && AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_CFRANGE_TYPE,
+            &mut range as *mut _ as *mut c_void,
+        )
+            != 0;
+    CFRelease(value);
+    ok.then_some(range)
 }
 
 unsafe fn ax_copy_attribute_point(
@@ -510,6 +996,62 @@ unsafe fn ax_copy_attribute_size(
             != 0;
     CFRelease(value);
     ok.then_some(size)
+}
+
+unsafe fn ax_copy_parameterized_rect(
+    element: AXUIElementRef,
+    attribute: &str,
+    range: CFRange,
+) -> Option<(i32, i32, i32, i32)> {
+    let attribute = CFString::new(attribute);
+    let range_value = AXValueCreate(AX_VALUE_CFRANGE_TYPE, &range as *const _ as *const c_void);
+    if range_value.is_null() {
+        return None;
+    }
+
+    let mut value: CFTypeRef = ptr::null();
+    let err = AXUIElementCopyParameterizedAttributeValue(
+        element,
+        attribute.as_concrete_TypeRef(),
+        range_value,
+        &mut value,
+    );
+    CFRelease(range_value);
+    if err != AX_ERROR_SUCCESS || value.is_null() {
+        return None;
+    }
+
+    let mut rect: CGRect = std::mem::zeroed();
+    let ok = AXValueGetType(value as AXValueRef) == AX_VALUE_CGRECT_TYPE
+        && AXValueGetValue(
+            value as AXValueRef,
+            AX_VALUE_CGRECT_TYPE,
+            &mut rect as *mut _ as *mut c_void,
+        )
+            != 0;
+    CFRelease(value);
+    ok.then(|| {
+        (
+            rect.origin.x.round() as i32,
+            rect.origin.y.round() as i32,
+            rect.size.width.round() as i32,
+            rect.size.height.round() as i32,
+        )
+    })
+}
+
+unsafe fn ax_selected_text_range_bounds(element: AXUIElementRef) -> Option<(i32, i32, i32, i32)> {
+    let selected_range = ax_copy_attribute_range(element, "AXSelectedTextRange")?;
+    ax_copy_parameterized_rect(element, "AXBoundsForRange", selected_range).or_else(|| {
+        (selected_range.length == 0)
+            .then(|| CFRange {
+                location: selected_range.location,
+                length: 1,
+            })
+            .and_then(|fallback_range| {
+                ax_copy_parameterized_rect(element, "AXBoundsForRange", fallback_range)
+            })
+    })
 }
 
 unsafe fn ax_element_rect(element: AXUIElementRef) -> Option<(i32, i32, i32, i32)> {
@@ -589,6 +1131,7 @@ unsafe fn resolve_ax_window_candidate(
 struct AxFocusBuildResult {
     window: MacWindowCandidate,
     editable_hint: Option<EditableFocusHintInfo>,
+    platform_flags: u32,
 }
 
 unsafe fn build_ax_editable_focus_hint(
@@ -606,76 +1149,222 @@ unsafe fn build_ax_editable_focus_hint(
         return None;
     }
 
-    let focused_element = ax_copy_attribute_element(app, "AXFocusedUIElement");
-    let Some(focused_element) = focused_element else {
-        CFRelease(app as *const c_void);
-        return None;
+    let (focused_element, focused_source) = match ax_copy_focused_element_for_app(app, frontmost_pid) {
+        AxFocusedElementLookup::Found(focused_element, focused_source) => {
+            (focused_element, focused_source)
+        }
+        AxFocusedElementLookup::Unavailable { platform_flags } => {
+            CFRelease(app as *const c_void);
+            return Some(AxFocusBuildResult {
+                window: fallback_window,
+                editable_hint: None,
+                platform_flags,
+            });
+        }
     };
 
     let resolved_window = resolve_ax_window_candidate(app, focused_element, cg_windows)
         .unwrap_or(fallback_window);
     let window = resolved_window.rect;
 
-    let role = ax_copy_attribute_string(focused_element, "AXRole").unwrap_or_default();
-    let subrole = ax_copy_attribute_string(focused_element, "AXSubrole");
-    let editable_attr = ax_copy_attribute_bool(focused_element, "AXEditable");
-    let (editable, content_kind) =
-        classify_ax_editable_role(&role, subrole.as_deref(), editable_attr);
-
-    if !editable {
+    if let Some((editable_element, role, subrole, editable_attr, content_kind, editable_depth)) =
+        ax_resolve_editable_element(focused_element)
+    {
+        let editor = ax_element_rect(editable_element)
+            .and_then(|rect| rect_intersection(rect, window))
+            .or_else(|| {
+                get_cursor_pos()
+                    .filter(|(x, y)| point_in_rect(window, *x, *y))
+                    .and_then(|cursor| synth_editor_rect_from_cursor(window, cursor))
+            });
+        let caret = editor.and_then(|editor_rect| {
+            ax_selected_text_range_bounds(editable_element)
+                .and_then(|bounds| caret_rect_from_range_bounds(bounds, editor_rect, window))
+        });
+        let pane = editor.and_then(|editor_rect| ax_pick_pane_rect(focused_element, editor_rect, window));
+        CFRelease(editable_element as *const c_void);
         CFRelease(focused_element as *const c_void);
         CFRelease(app as *const c_void);
+
+        let Some(editor) = editor else {
+            return Some(AxFocusBuildResult {
+                window: resolved_window,
+                editable_hint: None,
+                platform_flags: 0,
+            });
+        };
+        let pane = pane.unwrap_or(window);
+
+        log::debug!(
+            "editable_focus macOS AX hit: source={} role={} subrole={:?} editable_attr={:?} kind={} depth={} caret={:?} editor={:?} pane={:?} window={:?}",
+            focused_source,
+            role,
+            subrole,
+            editable_attr,
+            content_kind,
+            editable_depth,
+            caret,
+            editor,
+            pane,
+            window,
+        );
+
         return Some(AxFocusBuildResult {
             window: resolved_window,
-            editable_hint: None,
+            editable_hint: Some(normalize_editable_focus_hint_to_display(
+                displays,
+                EditableFocusHintInfo {
+                    editable: true,
+                    caret: caret.unwrap_or((0, 0, 0, 0)),
+                    editor,
+                    window,
+                    pane,
+                    display_idx: 0,
+                    content_kind,
+                    foreground_hwnd: resolved_window.foreground_hwnd,
+                    platform_flags: 0,
+                },
+            )),
+            platform_flags: 0,
         });
     }
 
-    let editor = ax_element_rect(focused_element)
-        .and_then(|rect| rect_intersection(rect, window))
-        .or_else(|| {
-            get_cursor_pos()
-                .filter(|(x, y)| point_in_rect(window, *x, *y))
-                .and_then(|cursor| synth_editor_rect_from_cursor(window, cursor))
+    if let Some((text_element, role, subrole, text_bounds, content_kind, text_depth)) =
+        ax_resolve_text_range_element(focused_element)
+    {
+        let content_rect = ax_element_rect(text_element).and_then(|rect| rect_intersection(rect, window));
+        let caret = rect_intersection(text_bounds, window);
+        let editor = caret
+            .and_then(rect_center)
+            .and_then(|cursor| {
+                content_rect
+                    .and_then(|rect| synth_editor_rect_from_cursor(rect, cursor))
+                    .or_else(|| synth_editor_rect_from_cursor(window, cursor))
+            })
+            .or_else(|| content_rect)
+            .or(caret);
+        let pane = editor.and_then(|editor_rect| {
+            content_rect
+                .filter(|rect| pane_candidate_is_meaningful(*rect, editor_rect, window))
+                .or_else(|| ax_pick_pane_rect(text_element, editor_rect, window))
         });
-    let pane = editor.and_then(|editor_rect| ax_pick_pane_rect(focused_element, editor_rect, window));
-    CFRelease(focused_element as *const c_void);
-    CFRelease(app as *const c_void);
+        CFRelease(text_element as *const c_void);
+        CFRelease(focused_element as *const c_void);
+        CFRelease(app as *const c_void);
 
-    let Some(editor) = editor else {
+        if let Some(editor) = editor {
+            let pane = pane.unwrap_or(window);
+            log::debug!(
+                "editable_focus macOS text-range fallback: source={} role={} subrole={:?} kind={} depth={} text_bounds={:?} caret={:?} editor={:?} pane={:?} window={:?}",
+                focused_source,
+                role,
+                subrole,
+                content_kind,
+                text_depth,
+                text_bounds,
+                caret,
+                editor,
+                pane,
+                window,
+            );
+
+            return Some(AxFocusBuildResult {
+                window: resolved_window,
+                editable_hint: Some(normalize_editable_focus_hint_to_display(
+                    displays,
+                    EditableFocusHintInfo {
+                        editable: true,
+                        caret: caret.unwrap_or((0, 0, 0, 0)),
+                        editor,
+                        window,
+                        pane,
+                        display_idx: 0,
+                        content_kind,
+                        foreground_hwnd: resolved_window.foreground_hwnd,
+                        platform_flags: 0,
+                    },
+                )),
+                platform_flags: 0,
+            });
+        }
+
         return Some(AxFocusBuildResult {
             window: resolved_window,
             editable_hint: None,
+            platform_flags: 0,
         });
-    };
-    let pane = pane.unwrap_or(window);
+    }
 
-    log::debug!(
-        "editable_focus macOS AX hit: role={} subrole={:?} editable_attr={:?} kind={} editor={:?} pane={:?} window={:?}",
-        role,
-        subrole,
-        editable_attr,
-        content_kind,
-        editor,
-        pane,
-        window,
-    );
+    if let Some((code_element, role, subrole, code_rect, code_depth)) =
+        ax_resolve_code_surface_element(focused_element)
+    {
+        let cursor = get_cursor_pos().filter(|(x, y)| point_in_rect(window, *x, *y));
+        let content_rect = code_rect.and_then(|rect| rect_intersection(rect, window));
+        let editor = cursor
+            .and_then(|cursor| {
+                content_rect
+                    .and_then(|rect| synth_editor_rect_from_cursor(rect, cursor))
+                    .or_else(|| synth_editor_rect_from_cursor(window, cursor))
+            })
+            .or(content_rect);
+        let pane = editor.and_then(|editor_rect| {
+            content_rect
+                .filter(|rect| pane_candidate_is_meaningful(*rect, editor_rect, window))
+                .or_else(|| ax_pick_pane_rect(code_element, editor_rect, window))
+        });
+        CFRelease(code_element as *const c_void);
+        CFRelease(focused_element as *const c_void);
+        CFRelease(app as *const c_void);
+
+        if let Some(editor) = editor {
+            let pane = pane.unwrap_or(content_rect.unwrap_or(window));
+            log::info!(
+                "editable_focus macOS focused-code-surface fallback: source={} role={} subrole={:?} depth={} content_rect={:?} editor={:?} pane={:?} window={:?}",
+                focused_source,
+                role,
+                subrole,
+                code_depth,
+                content_rect,
+                editor,
+                pane,
+                window,
+            );
+
+            return Some(AxFocusBuildResult {
+                window: resolved_window,
+                editable_hint: Some(normalize_editable_focus_hint_to_display(
+                    displays,
+                    EditableFocusHintInfo {
+                        editable: true,
+                        caret: (0, 0, 0, 0),
+                        editor,
+                        window,
+                        pane,
+                        display_idx: 0,
+                        content_kind: 3,
+                        foreground_hwnd: resolved_window.foreground_hwnd,
+                        platform_flags: 0,
+                    },
+                )),
+                platform_flags: 0,
+            });
+        }
+
+        return Some(AxFocusBuildResult {
+            window: resolved_window,
+            editable_hint: None,
+            platform_flags: 0,
+        });
+    }
+
+    log_ax_focus_chain_on_miss(frontmost_pid, focused_source, focused_element, window);
+    CFRelease(focused_element as *const c_void);
+    CFRelease(app as *const c_void);
 
     Some(AxFocusBuildResult {
         window: resolved_window,
-        editable_hint: Some(normalize_editable_focus_hint_to_display(
-            displays,
-            EditableFocusHintInfo {
-                editable: true,
-                caret: (0, 0, 0, 0),
-                editor,
-                window,
-                pane,
-                display_idx: 0,
-                content_kind,
-                foreground_hwnd: resolved_window.foreground_hwnd,
-            },
-        )),
+        editable_hint: None,
+        platform_flags: 0,
     })
 }
 
@@ -803,6 +1492,7 @@ fn fallback_window_hint(displays: &[DisplayInfo], frontmost_pid: i32) -> Option<
             display_idx: display_idx as i32,
             content_kind: 0,
             foreground_hwnd: make_foreground_window_id(frontmost_pid, 0),
+            platform_flags: 0,
         },
     ))
 }
@@ -828,6 +1518,7 @@ fn unsafe_get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFo
                     display_idx: 0,
                     content_kind: 0,
                     foreground_hwnd: ax_result.window.foreground_hwnd,
+                    platform_flags: ax_result.platform_flags,
                 },
             ));
         }
@@ -842,6 +1533,7 @@ fn unsafe_get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFo
                 display_idx: 0,
                 content_kind: 0,
                 foreground_hwnd: fallback_window.foreground_hwnd,
+                platform_flags: 0,
             },
         ));
     }
@@ -852,9 +1544,13 @@ fn unsafe_get_editable_focus_hint(displays: &[DisplayInfo]) -> Option<EditableFo
 #[cfg(test)]
 mod tests {
     use super::{
+        allow_ax_text_range_fallback,
+        ax_role_code_like, ax_text_surface_content_kind,
+        caret_rect_from_range_bounds,
         choose_window_candidate, classify_ax_editable_role,
         find_window_candidate_containing_point, pane_candidate_is_meaningful,
-        synth_editor_rect_from_cursor, MacWindowCandidate,
+        normalize_rect_to_display_with_scale, synth_editor_rect_from_cursor,
+        MacWindowCandidate,
     };
 
     #[test]
@@ -876,6 +1572,12 @@ mod tests {
     }
 
     #[test]
+    fn classify_code_like_text_surface_as_code() {
+        assert!(ax_role_code_like("AXGroup", Some("AXSourceEditor")));
+        assert_eq!(ax_text_surface_content_kind("AXGroup", Some("AXSourceEditor")), 3);
+    }
+
+    #[test]
     fn read_only_text_field_is_not_editable() {
         assert_eq!(
             classify_ax_editable_role("AXTextField", None, Some(false)),
@@ -894,6 +1596,24 @@ mod tests {
     #[test]
     fn keep_noneditable_group_closed() {
         assert_eq!(classify_ax_editable_role("AXGroup", None, None), (false, 0));
+    }
+
+    #[test]
+    fn text_range_fallback_rejects_generic_group() {
+        assert!(!allow_ax_text_range_fallback("AXGroup", None, None));
+        assert!(!allow_ax_text_range_fallback("AXGroup", None, Some(true)));
+        assert!(!allow_ax_text_range_fallback("AXStaticText", None, None));
+    }
+
+    #[test]
+    fn text_range_fallback_keeps_editor_like_surfaces() {
+        assert!(allow_ax_text_range_fallback("AXTextArea", None, None));
+        assert!(allow_ax_text_range_fallback("AXWebArea", None, Some(true)));
+        assert!(allow_ax_text_range_fallback(
+            "AXGroup",
+            Some("AXSourceEditor"),
+            None,
+        ));
     }
 
     #[test]
@@ -968,6 +1688,22 @@ mod tests {
 
         let chosen = find_window_candidate_containing_point(&candidates, 320, 260).unwrap();
         assert_eq!(chosen.foreground_hwnd, 3003);
+    }
+
+    #[test]
+    fn normalize_rect_to_display_applies_scale() {
+        assert_eq!(
+            normalize_rect_to_display_with_scale((120, 70, 200, 40), 100, 50, 2.0),
+            (40, 40, 400, 80)
+        );
+    }
+
+    #[test]
+    fn caret_rect_from_range_bounds_clamps_selection_width() {
+        assert_eq!(
+            caret_rect_from_range_bounds((220, 180, 120, 22), (200, 160, 400, 200), (120, 120, 900, 700)),
+            Some((220, 180, 8, 22))
+        );
     }
 }
 

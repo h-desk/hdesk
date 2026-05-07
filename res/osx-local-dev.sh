@@ -7,6 +7,7 @@ APP_DEST="${HDESK_MACOS_APP_DEST:-$HOME/Applications/HDesk.app}"
 DERIVED_DATA_PATH="${HDESK_MACOS_DERIVED_DATA_PATH:-$WORKSPACE_DIR/tmp_test/macos-local-derived-data}"
 MACOS_ARCH="${HDESK_MACOS_ARCH:-x86_64}"
 RUST_FEATURES="${HDESK_MACOS_RUST_FEATURES:-flutter,hwcodec}"
+LSREGISTER_BIN="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 detect_codesign_identity() {
   security find-identity -v -p codesigning 2>/dev/null |
@@ -28,6 +29,31 @@ sign_app_if_possible() {
 
   echo "Using codesign identity: $identity"
   codesign --force --deep --sign "$identity" "$app_path"
+}
+
+unregister_bundle_if_possible() {
+  local bundle_path="$1"
+
+  if [[ ! -d "$bundle_path" || ! -x "$LSREGISTER_BIN" ]]; then
+    return 0
+  fi
+
+  "$LSREGISTER_BIN" -u "$bundle_path" >/dev/null 2>&1 || true
+}
+
+cleanup_registered_build_products() {
+  local bundle_path
+
+  unregister_bundle_if_possible "$APP_SRC"
+
+  shopt -s nullglob
+  for bundle_path in "$HOME"/Library/Developer/Xcode/DerivedData/*/Build/Products/Release/HDesk.app; do
+    if [[ "$bundle_path" == "$APP_DEST" ]]; then
+      continue
+    fi
+    unregister_bundle_if_possible "$bundle_path"
+  done
+  shopt -u nullglob
 }
 
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}"
@@ -75,10 +101,13 @@ ditto "$APP_SRC" "$APP_DEST"
 echo "==> Signing deployed app"
 sign_app_if_possible "$APP_DEST"
 
+echo "==> Cleaning registered build products"
+cleanup_registered_build_products
+
 echo "==> Restarting HDesk"
 pkill -f 'HDesk.app/Contents/MacOS/HDesk' || true
 if [[ "${HDESK_SKIP_LAUNCH:-0}" != "1" ]]; then
-  open -n "$APP_DEST"
+  open -g -n "$APP_DEST"
 fi
 
 echo "==> Signature summary"
