@@ -2,7 +2,7 @@
 name = "rustdesk-portable-packer"
 version = "1.0.0"
 edition = "2021"
-description = "RustDesk Remote Desktop"
+description = "HDesk Remote Desktop"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -26,10 +26,11 @@ windows = { version = "0.61", features = [
 native-windows-gui = {version = "1.0", default-features = false, features = ["animation-timer", "image-decoder"]}
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2025 Purslane Ltd. All rights reserved."
-ProductName = "RustDesk"
-OriginalFilename = "rustdesk.exe"
-FileDescription = "RustDesk Remote Desktop"
+CompanyName = "苏州云极创智科技有限公司"
+LegalCopyright = "Copyright © 2025 苏州云极创智科技有限公司. All rights reserved."
+ProductName = "HDesk"
+OriginalFilename = "hdesk.exe"
+FileDescription = "HDesk Remote Desktop"
 #ProductVersion = ""
 
 [target.'cfg(target_os="windows")'.build-dependencies]

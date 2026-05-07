@@ -89,11 +89,11 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "Yunji Chuangzhi (Shenzhen) Technology Co., Ltd." "\0"
+            VALUE "CompanyName", "苏州云极创智科技有限公司" "\0"
             VALUE "FileDescription", "HDesk Remote Desktop" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
             VALUE "InternalName", "hdesk" "\0"
-            VALUE "LegalCopyright", "Copyright © 2025 Yunji Chuangzhi (Shenzhen) Technology Co., Ltd. All rights reserved." "\0"
+            VALUE "LegalCopyright", "Copyright © 2025 苏州云极创智科技有限公司. All rights reserved." "\0"
             VALUE "OriginalFilename", "hdesk.exe" "\0"
             VALUE "ProductName", "HDesk" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"

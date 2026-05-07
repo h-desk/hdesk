@@ -1,7 +1,7 @@
 [package]
 name = "rustdesk"
 version = "1.0.0"
-authors = ["Yunji Chuangzhi (Shenzhen) Technology Co., Ltd."]
+authors = ["苏州云极创智科技有限公司"]
 edition = "2021"
 build= "build.rs"
 description = "HDesk Remote Desktop"
@@ -230,10 +230,11 @@ softbuffer = { path = "vendor/softbuffer" }
 winreg = { path = "vendor/winreg-0.10.1" }
 
 [package.metadata.winres]
-LegalCopyright = "Copyright © 2025 Purslane Ltd. All rights reserved."
-ProductName = "RustDesk"
-FileDescription = "RustDesk Remote Desktop"
-OriginalFilename = "rustdesk.exe"
+CompanyName = "苏州云极创智科技有限公司"
+LegalCopyright = "Copyright © 2025 苏州云极创智科技有限公司. All rights reserved."
+ProductName = "HDesk"
+FileDescription = "HDesk Remote Desktop"
+OriginalFilename = "hdesk.exe"
 
 [target.'cfg(target_os="windows")'.build-dependencies]
 winres = "0.1"

@@ -3243,6 +3243,10 @@ pub fn install_me(options: &str, path: String, silent: bool, debug: bool) -> Res
         version_build = versions[2];
     }
     let app_name = crate::get_app_name();
+    let publisher_name = option_env!("CARGO_PKG_AUTHORS")
+        .and_then(|authors| authors.split(':').find(|author| !author.trim().is_empty()))
+        .map(|author| author.trim().to_owned())
+        .unwrap_or_else(|| app_name.clone());
 
     let current_exe = std::env::current_exe()?;
 
@@ -3379,7 +3383,7 @@ reg add {subkey} /f /v DisplayVersion /t REG_SZ /d \"{version}\"
 reg add {subkey} /f /v Version /t REG_SZ /d \"{version}\"
 reg add {subkey} /f /v BuildDate /t REG_SZ /d \"{build_date}\"
 reg add {subkey} /f /v InstallLocation /t REG_SZ /d \"{path}\"
-reg add {subkey} /f /v Publisher /t REG_SZ /d \"{app_name}\"
+reg add {subkey} /f /v Publisher /t REG_SZ /d \"{publisher_name}\"
 reg add {subkey} /f /v VersionMajor /t REG_DWORD /d {version_major}
 reg add {subkey} /f /v VersionMinor /t REG_DWORD /d {version_minor}
 reg add {subkey} /f /v VersionBuild /t REG_DWORD /d {version_build}
@@ -3410,6 +3414,7 @@ copy /Y \"{tmp_path}\\Uninstall {app_name}.lnk\" \"{path}\\\"
         dels = if debug { "" } else { &dels },
         copy_exe = copy_exe_cmd(&src_exe, &exe, &path)?,
         import_config = get_import_config(&exe),
+        publisher_name = publisher_name,
     );
     run_cmds(cmds, debug, "install")?;
     ensure_service_ready("install")?;
