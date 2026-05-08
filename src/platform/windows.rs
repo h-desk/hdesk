@@ -1828,6 +1828,7 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
                 display_idx,
                 content_kind: 2,
                 foreground_hwnd: fg_hwnd_isize,
+                platform_flags: 0,
             });
             if is_qt_class(fg_hwnd) {
                 record_qt_caret_confirmation(fg_hwnd, &caret_hint);
@@ -1876,6 +1877,7 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
         display_idx,
         content_kind,
         foreground_hwnd: fg_hwnd_isize,
+        platform_flags: 0,
     })))
 }
 
