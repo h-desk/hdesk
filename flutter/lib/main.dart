@@ -249,6 +249,8 @@ Future<void> initEnv(String appType) async {
       value: 'hdesk.yunjichuangzhi.cn');
   bind.mainSetOption(
       key: 'relay-server', value: 'hdesk.yunjichuangzhi.cn');
+    bind.mainSetOption(
+      key: 'key', value: 'ulv5yLdNYzDH+KqSVrU2TeX3I8T9pchV4G0Uzt4fLYs=');
   bind.mainSetOption(key: 'api-server', value: '');
   await _applyHdeskManagedDesktopDefaults(appType);
   // await Firebase.initializeApp();

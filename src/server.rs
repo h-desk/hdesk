@@ -336,6 +336,7 @@ async fn create_relay_connection_(
     msg_out.set_request_relay(RequestRelay {
         licence_key,
         uuid,
+        product_code: crate::common::PRODUCT_CODE.to_owned(),
         ..Default::default()
     });
     stream.send(&msg_out).await?;
