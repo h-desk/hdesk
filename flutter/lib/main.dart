@@ -9,6 +9,8 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common/widgets/overlay.dart';
+import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
+import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_tab_page.dart';
 import 'package:flutter_hbb/desktop/pages/install_page.dart';
 import 'package:flutter_hbb/desktop/pages/server_page.dart';
@@ -58,6 +60,8 @@ const Map<String, String> _kHdeskManagedPermissionDefaults = {
   kOptionEnableRecordSession: 'N',
   kOptionEnableBlockInput: 'N',
 };
+
+VoidCallback? _refreshMainAppTheme;
 
 bool _showHdeskAdvancedSecuritySettings() {
   return bind.mainGetBuildinOption(key: 'show-advanced-security-settings') ==
@@ -202,6 +206,15 @@ Future<void> main(List<String> args) async {
           argument,
           kAppTypeDesktopTerminal,
         );
+        break;
+      case WindowType.Settings:
+        desktopType = DesktopType.settings;
+        runSettingsWindow(argument);
+        break;
+      case WindowType.Password:
+        desktopType = DesktopType.password;
+        runPasswordWindow(argument);
+        break;
       default:
         break;
     }
@@ -246,6 +259,7 @@ Future<void> initEnv(String appType) async {
 
 void runMainApp(bool startService) async {
   await initEnv(kAppTypeMain);
+  stateGlobal.desktopMainWindowReady.value = false;
   await initDesktopConnectionNotifier();
   checkUpdate();
   await bind.mainCheckConnectStatus();
@@ -283,9 +297,33 @@ void runMainApp(bool startService) async {
     }
     windowManager.setOpacity(1);
     windowManager.setTitle(getWindowName());
-    // Do not use `windowManager.setResizable()` here.
-    setResizable(!bind.isIncomingOnly());
+    // HDesk main window uses programmatic resizing only.
+    setResizable(false);
+    stateGlobal.desktopMainWindowReady.value = true;
   });
+}
+
+void runSettingsWindow(Map<String, dynamic> argument) async {
+  await initEnv(kAppTypeMain);
+  final initialTab = DesktopSettingPage.parseInitialTabName(
+    argument[DesktopSettingPage.windowInitTabKey],
+  );
+  _runApp(
+    getWindowName(overrideType: WindowType.Settings),
+    DesktopSettingsWindowPage(initialTabkey: initialTab),
+    MyTheme.currentThemeMode(),
+  );
+  setResizable(false);
+}
+
+void runPasswordWindow(Map<String, dynamic> argument) async {
+  await initEnv(kAppTypeMain);
+  _runApp(
+    getWindowName(overrideType: WindowType.Password),
+    const DesktopPasswordWindowPage(),
+    MyTheme.currentThemeMode(),
+  );
+  setResizable(false);
 }
 
 void runMobileApp() async {
@@ -521,7 +559,7 @@ void _runApp(
       title: title,
       theme: MyTheme.lightTheme,
       darkTheme: MyTheme.darkTheme,
-      themeMode: themeMode,
+      themeMode: MyTheme.currentThemeMode(),
       home: home,
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -582,9 +620,16 @@ class App extends StatefulWidget {
 }
 
 class _AppState extends State<App> with WidgetsBindingObserver {
+  void _refreshTheme() {
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _refreshMainAppTheme = _refreshTheme;
     WidgetsBinding.instance.window.onPlatformBrightnessChanged = () {
       final userPreference = MyTheme.getThemeModePreference();
       if (userPreference != ThemeMode.system) return;
@@ -611,6 +656,9 @@ class _AppState extends State<App> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    if (_refreshMainAppTheme == _refreshTheme) {
+      _refreshMainAppTheme = null;
+    }
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -712,13 +760,20 @@ Widget _keepScaleBuilder(BuildContext context, Widget? child) {
 }
 
 _registerEventHandler() {
-  if (isDesktop && desktopType != DesktopType.main) {
+  if (isDesktop) {
     platformFFI.registerEventHandler('theme', 'theme', (evt) async {
       String? dark = evt['dark'];
       if (dark != null) {
-        await MyTheme.changeDarkMode(MyTheme.themeModeFromString(dark));
+        MyTheme.applyDarkModeLocally(MyTheme.themeModeFromString(dark));
+        if (_refreshMainAppTheme != null) {
+          _refreshMainAppTheme!();
+        } else if (globalKey.currentContext != null) {
+          RefreshWrapper.of(globalKey.currentContext!)?.rebuild();
+        }
       }
     });
+  }
+  if (isDesktop && desktopType != DesktopType.main) {
     platformFFI.registerEventHandler('language', 'language', (_) async {
       reloadAllWindows();
     });

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_hbb/common/widgets/setting_widgets.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_home_page.dart';
 import 'package:flutter_hbb/desktop/pages/settings_dialog_utils.dart';
+import 'package:flutter_hbb/desktop/utils/theme_sync_utils.dart';
 import 'package:flutter_hbb/desktop/widgets/remote_toolbar.dart';
 import 'package:flutter_hbb/desktop/widgets/update_progress.dart';
 import 'package:flutter_hbb/mobile/widgets/dialog.dart';
@@ -26,9 +28,12 @@ import 'package:url_launcher/url_launcher_string.dart';
 
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
+import '../../main.dart';
+import '../../utils/multi_window_manager.dart';
 
 const double _kSettingsDialogMaxWidth = 820;
 const double _kSettingsDialogMaxHeight = 720;
+const String _kSettingsWindowInitTabKey = 'initial_tab';
 const double _kCardFixedWidth = 760;
 const double _kCardLeftMargin = 0;
 const double _kContentHMargin = 15;
@@ -39,12 +44,12 @@ const double _kListViewBottomMargin = 15;
 const double _kTitleFontSize = 20;
 const double _kContentFontSize = 15;
 const Color _accentColor = MyTheme.accent;
-const String _kDesktopSettingsDialogTag = 'desktop-settings-dialog';
 const double _kSectionSpacing = 8;
-const double _kSettingsDialogHeaderHeight = 72;
-const double _kSettingsDialogChromeHeight = _kSettingsDialogHeaderHeight;
+const double _kSettingsDialogHeaderHeight = 64;
 
 _DesktopSettingPageState? _activeSettingsPageState;
+int? _settingsWindowId;
+Future<void>? _settingsWindowOpenTask;
 
 Future<void> _openPathInSystemFileManager(String path) async {
   try {
@@ -66,6 +71,29 @@ Future<void> _openPathInSystemFileManager(String path) async {
   }
 }
 
+Future<bool> _notifyDesktopMainWindow(String method, [dynamic args]) async {
+  if (!isDesktop || desktopType == DesktopType.main) {
+    return false;
+  }
+
+  for (var attempt = 1; attempt <= 2; attempt++) {
+    try {
+      final result =
+          await DesktopMultiWindow.invokeMethod(kMainWindowId, method, args);
+      if (didDesktopMainWindowAcknowledge(result)) {
+        return true;
+      }
+      debugPrint(
+          'Main window did not acknowledge $method on attempt $attempt: $result');
+    } catch (e) {
+      debugPrint(
+          'Failed to notify main window with $method on attempt $attempt: $e');
+    }
+  }
+
+  return false;
+}
+
 enum SettingsTabKey {
   general,
   safety,
@@ -78,6 +106,7 @@ enum SettingsTabKey {
 
 class DesktopSettingPage extends StatefulWidget {
   final SettingsTabKey initialTabkey;
+  static String get windowInitTabKey => _kSettingsWindowInitTabKey;
   static final List<SettingsTabKey> tabKeys = [
     SettingsTabKey.general,
     if (!isWeb &&
@@ -109,86 +138,76 @@ class DesktopSettingPage extends StatefulWidget {
         SettingsTabKey.general;
   }
 
+  static SettingsTabKey parseInitialTabName(dynamic rawValue) {
+    if (rawValue is String) {
+      for (final tab in SettingsTabKey.values) {
+        if (tab.name == rawValue) {
+          return _normalizeInitialTab(tab);
+        }
+      }
+    }
+    return SettingsTabKey.general;
+  }
+
   static void show({SettingsTabKey initialTabkey = SettingsTabKey.general}) {
+    unawaited(_showStandaloneWindow(initialTabkey));
+  }
+
+  static Future<void> _showStandaloneWindow(
+      SettingsTabKey initialTabkey) async {
     try {
       if (tabKeys.isEmpty) {
         return;
       }
       final resolvedInitialTab = _normalizeInitialTab(initialTabkey);
-      final dialogManager = gFFI.dialogManager;
-      if (dialogManager.existing(_kDesktopSettingsDialogTag) &&
-          _activeSettingsPageState != null) {
-        _activeSettingsPageState!.scrollToSection(resolvedInitialTab);
-        return;
+      final existingWindowId = _settingsWindowId;
+      if (existingWindowId != null) {
+        try {
+          await DesktopMultiWindow.invokeMethod(
+              existingWindowId, kWindowEventShowSettings, resolvedInitialTab.name);
+          final controller = WindowController.fromWindowId(existingWindowId);
+          await controller.show();
+          await controller.focus();
+          return;
+        } catch (_) {
+          _settingsWindowId = null;
+        }
       }
-      if (dialogManager.existing(_kDesktopSettingsDialogTag)) {
-        dialogManager.dismissByTag(_kDesktopSettingsDialogTag);
+
+      if (_settingsWindowOpenTask != null) {
+        await _settingsWindowOpenTask;
+        if (_settingsWindowId != null) {
+          return _showStandaloneWindow(resolvedInitialTab);
+        }
       }
-      dialogManager.show(
-        tag: _kDesktopSettingsDialogTag,
-        clickMaskDismiss: true,
-        backDismiss: true,
-        (setState, close, context) {
-          final dialogSize = computeSettingsDialogSize(
-            MediaQuery.of(context).size,
-            preferredWidth: _kSettingsDialogMaxWidth,
-            preferredHeight: _kSettingsDialogMaxHeight,
-          );
-          final dialogContentHeight = dialogSize.height >
-                  _kSettingsDialogChromeHeight
-              ? dialogSize.height - _kSettingsDialogChromeHeight
-              : dialogSize.height;
-          return CustomAlertDialog(
-            scrollable: false,
-            titlePadding: EdgeInsets.zero,
-            contentPadding: 0,
-            title: Container(
-              height: _kSettingsDialogHeaderHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Theme.of(context).dialogTheme.backgroundColor ??
-                    Theme.of(context).cardColor,
-                border: Border(
-                  bottom: BorderSide(color: Theme.of(context).dividerColor),
-                ),
-              ),
-              child: Row(
-                children: [
-                  const SizedBox(width: 48, height: 48),
-                  Expanded(
-                    child: Center(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(Icons.settings_rounded,
-                              color: _accentColor),
-                          const SizedBox(width: 12),
-                          Text(
-                              translate('Settings'),
-                            style: const TextStyle(fontSize: _kTitleFontSize),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    splashRadius: 18,
-                    onPressed: () => close(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-            ),
-            contentBoxConstraints: BoxConstraints(maxWidth: dialogSize.width),
-            content: SizedBox(
-              width: dialogSize.width,
-              height: dialogContentHeight,
-              child: DesktopSettingPage(initialTabkey: resolvedInitialTab),
-            ),
-            onCancel: close,
-          );
-        },
-      );
+
+      final openTask = () async {
+        final controller = await DesktopMultiWindow.createWindow(
+          jsonEncode({
+            'type': WindowType.Settings.index,
+            _kSettingsWindowInitTabKey: resolvedInitialTab.name,
+          }),
+        );
+        _settingsWindowId = controller.windowId;
+        if (isWindows) {
+          controller.setInitBackgroundColor(Colors.transparent);
+        }
+        await controller.setFrame(
+          const Offset(0, 0) &
+              const Size(_kSettingsDialogMaxWidth, _kSettingsDialogMaxHeight),
+        );
+        await controller.center();
+        await controller.setTitle(getWindowName(overrideType: WindowType.Settings));
+        await controller.show();
+        await controller.focus();
+      }();
+
+      _settingsWindowOpenTask = openTask;
+      try {
+        await openTask;
+      } finally {
+        _settingsWindowOpenTask = null;
+      }
     } catch (e) {
       debugPrintStack(label: '$e');
     }
@@ -372,6 +391,116 @@ class _DesktopSettingPageState extends State<DesktopSettingPage>
   }
 }
 
+class DesktopSettingsWindowPage extends StatefulWidget {
+  const DesktopSettingsWindowPage({
+    Key? key,
+    required this.initialTabkey,
+  }) : super(key: key);
+
+  final SettingsTabKey initialTabkey;
+
+  @override
+  State<DesktopSettingsWindowPage> createState() =>
+      _DesktopSettingsWindowPageState();
+}
+
+class _DesktopSettingsWindowPageState extends State<DesktopSettingsWindowPage> {
+  @override
+  void initState() {
+    super.initState();
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == kWindowEventShowSettings) {
+        final tab = DesktopSettingPage.parseInitialTabName(call.arguments);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _activeSettingsPageState?.scrollToSection(tab);
+        });
+        return true;
+      }
+      if (call.method == kWindowActionRebuild) {
+        reloadCurrentWindow();
+        return true;
+      }
+      return null;
+    });
+  }
+
+  Future<void> _closeWindow() async {
+    _settingsWindowId = null;
+    try {
+      await WindowController.fromWindowId(kWindowId!).close();
+    } catch (e) {
+      debugPrint('Failed to close settings window: $e');
+    }
+  }
+
+  void _startWindowDrag() {
+    if (kWindowId != null) {
+      WindowController.fromWindowId(kWindowId!).startDragging();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: Column(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) => _startWindowDrag(),
+            child: Container(
+              height: _kSettingsDialogHeaderHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dialogTheme.backgroundColor ??
+                    Theme.of(context).cardColor,
+                border: Border(
+                  bottom: BorderSide(color: Theme.of(context).dividerColor),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.settings_rounded, color: _accentColor),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      translate('Settings'),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    splashRadius: 18,
+                    onPressed: _closeWindow,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: DesktopSettingPage(initialTabkey: widget.initialTabkey),
+          ),
+        ],
+      ),
+    );
+
+    return isLinux
+        ? buildVirtualWindowFrame(context, body)
+        : workaroundWindowBorder(
+            context,
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: MyTheme.color(context).border!),
+              ),
+              child: body,
+            ),
+          );
+  }
+}
+
 //#region pages
 
 class _General extends StatefulWidget {
@@ -384,9 +513,17 @@ class _General extends StatefulWidget {
 }
 
 class _GeneralState extends State<_General> {
-  final RxBool serviceStop =
-      isWeb ? RxBool(false) : Get.find<RxBool>(tag: 'stop-service');
+  late final RxBool serviceStop;
   RxBool serviceBtnEnabled = true.obs;
+
+  @override
+  void initState() {
+    super.initState();
+    serviceStop = (isWeb
+            ? false
+            : mainGetBoolOptionSync(kOptionStopService))
+        .obs;
+  }
 
   bool _showAdvancedGeneralSettings() {
     return bind.mainGetBuildinOption(key: 'show-advanced-general-settings') ==
@@ -429,7 +566,13 @@ class _GeneralState extends State<_General> {
   Widget theme() {
     final current = MyTheme.getThemeModePreference().toShortString();
     onChanged(String value) async {
-      await MyTheme.changeDarkMode(MyTheme.themeModeFromString(value));
+      final mode = MyTheme.themeModeFromString(value);
+      await MyTheme.changeDarkMode(mode);
+      final synced = await _notifyDesktopMainWindow(
+          kWindowEventThemeMode, mode.toShortString());
+      if (!synced) {
+        debugPrint('Theme sync to main window was not acknowledged.');
+      }
       setState(() {});
     }
 
@@ -471,6 +614,7 @@ class _GeneralState extends State<_General> {
           () async {
             serviceBtnEnabled.value = false;
             await start_service(serviceStop.value);
+            serviceStop.value = mainGetBoolOptionSync(kOptionStopService);
             // enable the button after 1 second
             Future.delayed(const Duration(seconds: 1), () {
               serviceBtnEnabled.value = true;
@@ -800,9 +944,13 @@ class _GeneralState extends State<_General> {
         initialKey: currentKey,
         onChanged: (key) async {
           await bind.mainSetLocalOption(key: kCommConfKeyLang, value: key);
-          if (isWeb) reloadCurrentWindow();
-          if (!isWeb) reloadAllWindows();
-          if (!isWeb) bind.mainChangeLanguage(lang: key);
+          if (isWeb) {
+            reloadCurrentWindow();
+            return;
+          }
+          await bind.mainChangeLanguage(lang: key);
+          await _notifyDesktopMainWindow(kWindowEventRefreshHome);
+          reloadCurrentWindow();
         },
         enabled: !isOptFixed,
       ).marginOnly(left: _kContentHMargin);
@@ -828,7 +976,8 @@ class _Safety extends StatefulWidget {
 class _SafetyState extends State<_Safety> with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
-  bool locked = bind.mainIsInstalled();
+  bool locked = bind.mainIsInstalled() &&
+      bind.mainGetBuildinOption(key: 'show-advanced-security-settings') == 'Y';
   ScrollController? _scrollController;
 
   ScrollController get _effectiveScrollController =>

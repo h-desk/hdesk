@@ -2681,7 +2681,7 @@ class _DraggableShowHideState extends State<_DraggableShowHide> {
               return Offstage();
             } else {
               return buttonWrapper(
-                () => closeConnection(id: widget.id),
+                  () => closeConnection(id: widget.id),
                 Tooltip(
                   message: translate('Close'),
                   child: Icon(

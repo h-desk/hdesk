@@ -119,6 +119,12 @@ class _RemotePageState extends State<RemotePage>
   void initState() {
     super.initState();
     _ffi = FFI(widget.sessionId);
+    if (Get.isRegistered<FFI>(tag: widget.id)) {
+      final registeredFfi = Get.find<FFI>(tag: widget.id);
+      if (registeredFfi.closed) {
+        Get.delete<FFI>(tag: widget.id);
+      }
+    }
     Get.put<FFI>(_ffi, tag: widget.id);
     _ffi.imageModel.addCallbackOnFirstImage((String peerId) {
       _ffi.canvasModel.activateLocalCursor();
@@ -321,7 +327,7 @@ class _RemotePageState extends State<RemotePage>
     // Clear callback reference to prevent memory leaks and stale references
     _ffi.inputModel.onRelativeMouseModeDisabled = null;
     // Relative mouse mode cleanup is centralized in FFI.close(closeSession: ...).
-    _ffi.textureModel.onRemotePageDispose(closeSession);
+    await _ffi.textureModel.onRemotePageDispose(closeSession);
     if (closeSession) {
       // ensure we leave this session, this is a double check
       _ffi.inputModel.enterOrLeave(false);
@@ -331,7 +337,9 @@ class _RemotePageState extends State<RemotePage>
     _ffi.imageModel.disposeImage();
     _ffi.cursorModel.disposeImages();
     _rawKeyFocusNode.dispose();
-    await _ffi.close(closeSession: closeSession);
+    if (!_ffi.closed) {
+      await _ffi.close(closeSession: closeSession);
+    }
     _timer?.cancel();
     _ffi.dialogManager.dismissAll();
     if (closeSession) {
@@ -339,7 +347,12 @@ class _RemotePageState extends State<RemotePage>
           overlays: SystemUiOverlay.values);
     }
     WakelockManager.disable(_uniqueKey);
-    await Get.delete<FFI>(tag: widget.id);
+    if (Get.isRegistered<FFI>(tag: widget.id)) {
+      final registeredFfi = Get.find<FFI>(tag: widget.id);
+      if (identical(registeredFfi, _ffi)) {
+        await Get.delete<FFI>(tag: widget.id);
+      }
+    }
     removeSharedStates(widget.id);
   }
 

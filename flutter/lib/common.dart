@@ -109,6 +109,8 @@ enum DesktopType {
   terminal,
   cm,
   portForward,
+  settings,
+  password,
 }
 
 bool isDoubleEqual(double a, double b) {
@@ -582,9 +584,16 @@ class MyTheme {
     return themeModeFromString(bind.mainGetLocalOption(key: kCommConfKeyTheme));
   }
 
-  static Future<void> changeDarkMode(ThemeMode mode) async {
+  static void applyDarkModeLocally(ThemeMode mode) {
     Get.changeThemeMode(mode);
-    if (desktopType == DesktopType.main || isAndroid || isIOS || isWeb) {
+    if (isDesktop || isAndroid || isIOS || isWeb) {
+      updateSystemWindowTheme();
+    }
+  }
+
+  static Future<void> changeDarkMode(ThemeMode mode) async {
+    applyDarkModeLocally(mode);
+    if (isDesktop || isAndroid || isIOS || isWeb) {
       if (mode == ThemeMode.system) {
         await bind.mainSetLocalOption(
             key: kCommConfKeyTheme, value: defaultOptionTheme);
@@ -593,8 +602,6 @@ class MyTheme {
             key: kCommConfKeyTheme, value: mode.toShortString());
       }
       if (!isWeb) await bind.mainChangeTheme(dark: mode.toShortString());
-      // Synchronize the window theme of the system.
-      updateSystemWindowTheme();
     }
   }
 
@@ -1201,15 +1208,15 @@ void msgBox(SessionID sessionId, String type, String title, String text,
     {bool? hasCancel,
     ReconnectHandle? reconnect,
     int? reconnectTimeout,
-    VoidCallback? onSubmit,
+    FutureOr<void> Function()? onSubmit,
     int? submitTimeout}) {
   dialogManager.dismissAll();
   List<Widget> buttons = [];
   bool hasOk = false;
-  submit() {
+  submit() async {
     dialogManager.dismissAll();
     if (onSubmit != null) {
-      onSubmit.call();
+      await onSubmit.call();
     } else {
       // https://github.com/rustdesk/rustdesk/blob/5e9a31340b899822090a3731769ae79c6bf5f3e5/src/ui/common.tis#L263
       if (!type.contains("custom") && desktopType != DesktopType.portForward) {
@@ -3014,6 +3021,10 @@ String getWindowName({WindowType? overrideType}) {
       return "Port Forward - $name";
     case WindowType.RemoteDesktop:
       return "Remote Desktop - $name";
+    case WindowType.Settings:
+      return "Settings - $name";
+    case WindowType.Password:
+      return "Set Password - $name";
     default:
       break;
   }
@@ -3810,7 +3821,7 @@ Widget buildPresetPasswordWarning() {
     future: bind.isPresetPassword(),
     builder: (BuildContext context, AsyncSnapshot<bool> snapshot) {
       if (snapshot.connectionState == ConnectionState.waiting) {
-        return CircularProgressIndicator(); // Show a loading spinner while waiting for the Future to complete
+        return const SizedBox.shrink();
       } else if (snapshot.hasError) {
         return Text(
             'Error: ${snapshot.error}'); // Show an error message if the Future completed with an error

@@ -645,15 +645,33 @@ class _DesktopTabState extends State<DesktopTab>
                       offstage: kUseCompatibleUiMode || isMacOS,
                       child: Row(children: [
                         Offstage(
-                          offstage: !showLogo,
-                          child: loadIcon(16),
+                          offstage: !showLogo && !showTitle,
+                          child: InkWell(
+                            hoverColor: Colors.transparent,
+                            splashColor: Colors.transparent,
+                            highlightColor: Colors.transparent,
+                            focusColor: Colors.transparent,
+                            borderRadius: BorderRadius.circular(8),
+                            onTap: () => stateGlobal.emitDesktopHomeTitleLogoTap(),
+                            child: Row(
+                              children: [
+                                Offstage(
+                                  offstage: !showLogo,
+                                  child: loadIcon(16),
+                                ),
+                                Offstage(
+                                    offstage: !showTitle,
+                                    child: Text(
+                                      'HDesk',
+                                      style: const TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600),
+                                    ).marginOnly(left: 6))
+                              ],
+                            ).paddingSymmetric(horizontal: 4, vertical: 2),
+                          ),
                         ),
-                        Offstage(
-                            offstage: !showTitle,
-                            child: const Text(
-                              "RustDesk",
-                              style: TextStyle(fontSize: 13),
-                            ).marginOnly(left: 2))
+                        const SizedBox(width: 8),
                       ]).marginOnly(
                         left: 5,
                         right: 10,
@@ -1438,7 +1456,7 @@ class _TabDropDownButtonState extends State<_TabDropDownButton> {
 }
 
 bool _showTabBarBottomDivider(DesktopTabType tabType) {
-  return tabType == DesktopTabType.main || tabType == DesktopTabType.install;
+  return false;
 }
 
 class TabbarTheme extends ThemeExtension<TabbarTheme> {

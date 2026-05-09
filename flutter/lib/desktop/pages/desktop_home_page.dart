@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_hbb/common.dart';
@@ -9,6 +10,9 @@ import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
+import 'package:flutter_hbb/desktop/utils/home_window_size_utils.dart';
+import 'package:flutter_hbb/desktop/utils/theme_sync_utils.dart';
+import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
@@ -30,6 +34,16 @@ class DesktopHomePage extends StatefulWidget {
 }
 
 const borderColor = Color(0xFF2F65BA);
+const _pcControlBackdoorTapThreshold = 5;
+const _pcControlBackdoorWindowSize = Size(854, 560);
+const _compactHomePaneWidth = 300.0;
+const _refreshIndicatorSize = 14.0;
+const _refreshIndicatorStrokeWidth = 1.5;
+const _passwordWindowSize = Size(560, 380);
+const _passwordWindowHeaderHeight = 64.0;
+
+int? _passwordWindowId;
+Future<void>? _passwordWindowOpenTask;
 
 class _DesktopHomePageState extends State<DesktopHomePage>
     with AutomaticKeepAliveClientMixin, WidgetsBindingObserver {
@@ -45,18 +59,27 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   var watchIsInputMonitoring = false;
   var watchIsCanRecordAudio = false;
   Timer? _updateTimer;
+  Timer? _pcControlBackdoorTapTimer;
+  Worker? _titleLogoTapWorker;
   bool isCardClosed = false;
+  bool _pcControlBackdoorEnabled = false;
+  int _pcControlBackdoorTapCount = 0;
 
   final RxBool _editHover = false.obs;
   final RxBool _block = false.obs;
 
   final GlobalKey _childKey = GlobalKey();
+  String _lastReadyServerId = '';
+  bool _preserveLastReadyServerIdForThemeRefresh = false;
 
   bool get _needsPermissionWatch =>
       watchIsCanScreenRecording ||
       watchIsProcessTrust ||
       watchIsInputMonitoring ||
       watchIsCanRecordAudio;
+
+  bool get _usesCompactHomeLayout =>
+      !bind.isOutgoingOnly() && !_pcControlBackdoorEnabled;
 
   Future<void> _refreshHomeState({bool pollPermissionWatch = false}) async {
     if (!isWindows) {
@@ -134,111 +157,159 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     });
   }
 
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-    final isIncomingOnly = bind.isIncomingOnly();
-    return _buildBlock(
-        child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        buildLeftPane(context),
-        if (!isIncomingOnly) const VerticalDivider(width: 1),
-        if (!isIncomingOnly) Expanded(child: buildRightPane(context)),
-      ],
-    ));
+  void _resetPcControlBackdoorTapProgress() {
+    _pcControlBackdoorTapTimer?.cancel();
+    _pcControlBackdoorTapTimer = null;
+    _pcControlBackdoorTapCount = 0;
   }
 
-  Widget _buildBlock({required Widget child}) {
-    return buildRemoteBlock(
-        block: _block, mask: true, use: canBeBlocked, child: child);
+  Future<void> _togglePcControlBackdoor([bool? enabled]) async {
+    final nextValue = enabled ?? !_pcControlBackdoorEnabled;
+    _resetPcControlBackdoorTapProgress();
+    if (_pcControlBackdoorEnabled == nextValue) {
+      return;
+    }
+    setState(() {
+      _pcControlBackdoorEnabled = nextValue;
+    });
+    stateGlobal.desktopHomeBackdoorExpanded.value = nextValue;
+    if (!bind.isOutgoingOnly()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && isInHomePage()) {
+          _updateWindowSize();
+        }
+      });
+    }
+  }
+
+  void _handlePcControlBackdoorTap() {
+    if (bind.isOutgoingOnly()) {
+      return;
+    }
+    _pcControlBackdoorTapTimer?.cancel();
+    _pcControlBackdoorTapCount += 1;
+    if (_pcControlBackdoorTapCount >= _pcControlBackdoorTapThreshold) {
+      unawaited(_togglePcControlBackdoor());
+      return;
+    }
+    _pcControlBackdoorTapTimer = Timer(
+      const Duration(milliseconds: 1200),
+      _resetPcControlBackdoorTapProgress,
+    );
+  }
+
+  void _armTransientServerIdPreservation() {
+    _preserveLastReadyServerIdForThemeRefresh = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_preserveLastReadyServerIdForThemeRefresh) {
+        return;
+      }
+      setState(() {
+        _preserveLastReadyServerIdForThemeRefresh = false;
+      });
+    });
   }
 
   Widget buildLeftPane(BuildContext context) {
-    final isIncomingOnly = bind.isIncomingOnly();
+    final usesCompactHomeLayout = _usesCompactHomeLayout;
     final isOutgoingOnly = bind.isOutgoingOnly();
-    final children = <Widget>[
-      if (!isOutgoingOnly) buildPresetPasswordWarning(),
-      if (bind.isCustomClient())
-        Align(
-          alignment: Alignment.center,
-          child: loadPowered(context),
-        ),
-      buildTip(context),
-      if (!isOutgoingOnly) buildIDBoard(context),
-      if (!isOutgoingOnly) buildControlledStatusCard(context),
-      if (!isOutgoingOnly) buildPasswordBoard(context),
-      FutureBuilder<Widget>(
-        future: Future.value(
-            Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
-        builder: (_, data) {
-          if (data.hasData) {
-            if (isIncomingOnly) {
-              if (isInHomePage()) {
-                Future.delayed(Duration(milliseconds: 300), () {
-                  _updateWindowSize();
-                });
-              }
-            }
-            return data.data!;
-          } else {
-            return const Offstage();
-          }
-        },
-      ),
-      buildPluginEntry(),
-    ];
-    // 移除 isIncomingOnly 模式下的状态栏，用户不需要看到服务状态
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
     return ChangeNotifierProvider.value(
       value: gFFI.serverModel,
-      child: Container(
-        width: isIncomingOnly ? 300.0 : 248.0,
-        color: Theme.of(context).colorScheme.background,
-        child: Stack(
-          children: [
-            Column(
-              children: [
-                SingleChildScrollView(
-                  controller: _leftPaneScrollController,
-                  child: Column(
-                    key: _childKey,
-                    children: children,
-                  ),
-                ),
-                Expanded(child: Container())
-              ],
+      child: Builder(builder: (context) {
+        final children = <Widget>[
+          if (!isOutgoingOnly) buildPresetPasswordWarning(),
+          if (bind.isCustomClient())
+            Align(
+              alignment: Alignment.center,
+              child: loadPowered(context),
             ),
-            if (isOutgoingOnly)
-              Positioned(
-                bottom: 6,
-                left: 12,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InkWell(
-                    child: Obx(
-                      () => Icon(
-                        Icons.settings,
-                        color: _editHover.value
-                            ? textColor
-                            : Colors.grey.withOpacity(0.5),
-                        size: 22,
-                      ),
+          if (!isOutgoingOnly)
+            Selector<ServerModel, bool>(
+              selector: (_, model) => model.desktopControlledSessions.isNotEmpty,
+              builder: (context, hasControlledSessions, child) {
+                return Column(
+                  children: [
+                    if (!hasControlledSessions) buildIDBoard(context),
+                    buildControlledStatusCard(context),
+                    if (!hasControlledSessions) buildPasswordBoard(context),
+                  ],
+                );
+              },
+            ),
+          FutureBuilder<Widget>(
+            future:
+                Future.value(Obx(() => buildHelpCards(stateGlobal.updateUrl.value))),
+            builder: (_, data) {
+              if (data.hasData) {
+                // Keep the original incoming-only auto-size behavior, but do
+                // not let normal compact home rebuilds recursively shrink the
+                // main window after settings-driven refreshes.
+                if (shouldRecalculateHomeWindowSizeAfterHelpCardsUpdate(
+                    isIncomingOnly: bind.isIncomingOnly(),
+                    usesCompactHomeLayout: usesCompactHomeLayout) &&
+                    isInHomePage()) {
+                  // Wait for the help cards to settle into the scroll view
+                  // before measuring the compact incoming-only window again.
+                  Future.delayed(const Duration(milliseconds: 300), () {
+                    unawaited(_updateWindowSize());
+                  });
+                }
+                return data.data!;
+              }
+              return const Offstage();
+            },
+          ),
+          buildPluginEntry(),
+        ];
+
+        return Container(
+          width: usesCompactHomeLayout ? _compactHomePaneWidth : 248.0,
+          color: Theme.of(context).colorScheme.background,
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  SingleChildScrollView(
+                    controller: _leftPaneScrollController,
+                    child: Column(
+                      key: _childKey,
+                      children: children,
                     ),
-                    onTap: () => {
-                      if (DesktopSettingPage.tabKeys.isNotEmpty)
-                        {
-                          DesktopSettingPage.switch2page(
-                              DesktopSettingPage.tabKeys[0])
-                        }
-                    },
-                    onHover: (value) => _editHover.value = value,
                   ),
-                ),
-              )
-          ],
-        ),
-      ),
+                  Expanded(child: Container())
+                ],
+              ),
+              if (isOutgoingOnly)
+                Positioned(
+                  bottom: 6,
+                  left: 12,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: InkWell(
+                      child: Obx(
+                        () => Icon(
+                          Icons.settings,
+                          color: _editHover.value
+                              ? textColor
+                              : Colors.grey.withOpacity(0.5),
+                          size: 22,
+                        ),
+                      ),
+                      onTap: () {
+                        if (DesktopSettingPage.tabKeys.isNotEmpty) {
+                          DesktopSettingPage.switch2page(
+                              DesktopSettingPage.tabKeys[0]);
+                        }
+                      },
+                      onHover: (value) => _editHover.value = value,
+                    ),
+                  ),
+                )
+            ],
+          ),
+        );
+      }),
     );
   }
 
@@ -252,7 +323,6 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildIDBoard(BuildContext context) {
     final model = gFFI.serverModel;
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     // 格式化 ID：每 3 位分组，更易读
     String formatId(String id) {
@@ -265,136 +335,100 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       return buffer.toString();
     }
 
-    // 判断是否为有效 ID（纯数字且 ≥6 位）
-    bool isValidId(String text) {
-      final digits = text.replaceAll(' ', '');
-      return digits.length >= 6 && RegExp(r'^\d+$').hasMatch(digits);
-    }
-
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E2128) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            translate("ID"),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: textColor?.withOpacity(0.6),
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 8),
+          ListenableBuilder(
+            listenable: model.serverId,
+            builder: (context, _) {
+              final idText = model.serverId.text;
+              if (isValidDesktopHomeServerId(idText)) {
+                _lastReadyServerId = idText;
+              }
+              final effectiveIdText = selectDesktopHomeServerId(
+                currentServerId: idText,
+                lastReadyServerId: _lastReadyServerId,
+                preserveLastReadyServerId:
+                    _preserveLastReadyServerIdForThemeRefresh,
+              );
+              final ready = isValidDesktopHomeServerId(effectiveIdText);
+              return GestureDetector(
+                onDoubleTap: ready
+                    ? () {
+                        Clipboard.setData(
+                            ClipboardData(text: effectiveIdText.replaceAll(' ', '')));
+                        showToast(translate("Copied"));
+                      }
+                    : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  width: double.infinity,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: ready
+                        ? MyTheme.accent.withOpacity(0.08)
+                        : Colors.grey.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: ready
+                          ? MyTheme.accent.withOpacity(0.2)
+                          : Colors.grey.withOpacity(0.15),
+                      width: 1,
+                    ),
+                  ),
+                  child: ready
+                      ? Text(
+                        formatId(effectiveIdText),
+                          maxLines: 1,
+                          softWrap: false,
+                          overflow: TextOverflow.fade,
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w600,
+                            fontFamily: 'monospace',
+                            letterSpacing: 2,
+                            color: textColor,
+                          ),
+                        )
+                      : Row(
+                          children: [
+                            SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: MyTheme.accent.withOpacity(0.6),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              translate('connecting_status'),
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: textColor?.withOpacity(0.45),
+                                fontStyle: FontStyle.italic,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              );
+            },
           ),
         ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  translate("ID"),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: textColor?.withOpacity(0.6),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // ListenableBuilder 确保 serverId 文本变化时立即刷新
-            ListenableBuilder(
-              listenable: model.serverId,
-              builder: (context, _) {
-                final idText = model.serverId.text;
-                final ready = isValidId(idText);
-                return GestureDetector(
-                  onDoubleTap: ready
-                      ? () {
-                          Clipboard.setData(
-                              ClipboardData(text: idText.replaceAll(' ', '')));
-                          showToast(translate("Copied"));
-                        }
-                      : null,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 300),
-                    width: double.infinity,
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: ready
-                          ? MyTheme.accent.withOpacity(0.08)
-                          : (isDark
-                              ? Colors.white.withOpacity(0.03)
-                              : Colors.grey.withOpacity(0.05)),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: ready
-                            ? MyTheme.accent.withOpacity(0.2)
-                            : Colors.grey.withOpacity(0.15),
-                        width: 1,
-                      ),
-                    ),
-                    child: ready
-                        ? Text(
-                            formatId(idText),
-                            maxLines: 1,
-                            softWrap: false,
-                            overflow: TextOverflow.fade,
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.w600,
-                              fontFamily: 'monospace',
-                              letterSpacing: 2,
-                              color: textColor,
-                            ),
-                          )
-                        : Row(
-                            children: [
-                              SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: MyTheme.accent.withOpacity(0.6),
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Text(
-                                translate('connecting_status'),
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: textColor?.withOpacity(0.45),
-                                  fontStyle: FontStyle.italic,
-                                ),
-                              ),
-                            ],
-                          ),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 6),
-            ListenableBuilder(
-              listenable: model.serverId,
-              builder: (context, _) {
-                final ready = isValidId(model.serverId.text);
-                return AnimatedOpacity(
-                  duration: const Duration(milliseconds: 300),
-                  opacity: ready ? 1.0 : 0.0,
-                  child: Text(
-                    translate('Double-click to copy'),
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: textColor?.withOpacity(0.4),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -712,161 +746,149 @@ class _DesktopHomePageState extends State<DesktopHomePage>
     RxBool refreshHover = false.obs;
     RxBool editHover = false.obs;
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
     final showOneTime = model.approveMode != 'click' &&
         model.verificationMethod != kUsePermanentPassword;
+    final isRefreshingOneTimePassword =
+        showOneTime && model.isRefreshingTemporaryPassword;
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E2128) : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  translate("One-time Password"),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: textColor?.withOpacity(0.6),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            translate("One-time Password"),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: textColor?.withOpacity(0.6),
+              letterSpacing: 0.5,
             ),
-            const SizedBox(height: 8),
-            GestureDetector(
-              onDoubleTap: () {
-                if (showOneTime) {
-                  Clipboard.setData(
-                      ClipboardData(text: model.serverPasswd.text));
-                  showToast(translate("Copied"));
-                }
-              },
-              child: Container(
-                width: double.infinity,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
+          ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onDoubleTap: () {
+              if (showOneTime && !isRefreshingOneTimePassword) {
+                Clipboard.setData(
+                    ClipboardData(text: model.serverPasswd.text));
+                showToast(translate("Copied"));
+              }
+            },
+            child: Container(
+              width: double.infinity,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: showOneTime
+                    ? MyTheme.accent.withOpacity(0.08)
+                    : Colors.grey.withOpacity(0.05),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
                   color: showOneTime
-                      ? MyTheme.accent.withOpacity(0.08)
-                      : Colors.grey.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: showOneTime
-                        ? MyTheme.accent.withOpacity(0.2)
-                        : Colors.grey.withOpacity(0.15),
-                    width: 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      showOneTime
-                          ? Icons.check_circle_outline
-                          : Icons.lock_clock,
-                      color:
-                          showOneTime ? const Color(0xFF10B981) : Colors.grey,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        showOneTime ? model.serverPasswd.text : '------',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w500,
-                          fontFamily: 'monospace',
-                          letterSpacing: 2,
-                          color: showOneTime
-                              ? textColor
-                              : textColor?.withOpacity(0.5),
-                        ),
-                      ),
-                    ),
-                    // 刷新图标紧贴密码右侧（inline）
-                    if (showOneTime)
-                      Obx(() => InkWell(
-                            onTap: () => bind.mainUpdateTemporaryPassword(),
-                            onHover: (v) => refreshHover.value = v,
-                            borderRadius: BorderRadius.circular(6),
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              padding: const EdgeInsets.all(5),
-                              decoration: BoxDecoration(
-                                color: refreshHover.value
-                                    ? MyTheme.accent.withOpacity(0.15)
-                                    : Colors.transparent,
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Icon(
-                                Icons.refresh_rounded,
-                                size: 17,
-                                color: refreshHover.value
-                                    ? MyTheme.accent
-                                    : MyTheme.accent.withOpacity(0.55),
-                              ),
-                            ),
-                          )),
-                  ],
+                      ? MyTheme.accent.withOpacity(0.2)
+                      : Colors.grey.withOpacity(0.15),
+                  width: 1,
                 ),
               ),
-            ),
-            // 更改密码：独立一行
-            if (!bind.isDisableSettings()) ...[
-              const SizedBox(height: 10),
-              InkWell(
-                onTap: () =>
-                    DesktopSettingPage.switch2page(SettingsTabKey.safety),
-                onHover: (value) => editHover.value = value,
-                borderRadius: BorderRadius.circular(8),
-                child: Obx(() => Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 8),
-                      decoration: BoxDecoration(
-                        color: editHover.value
-                            ? Colors.grey.withOpacity(0.12)
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: (textColor?.withOpacity(0.12)) ??
-                              Colors.grey.withOpacity(0.12),
-                        ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      showOneTime ? model.serverPasswd.text : '------',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'monospace',
+                        letterSpacing: 2,
+                        color: showOneTime
+                            ? textColor
+                            : textColor?.withOpacity(0.5),
                       ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.edit_outlined,
-                              size: 14, color: textColor?.withOpacity(0.6)),
-                          const SizedBox(width: 6),
-                          Text(
-                            translate('Set permanent password'),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: textColor?.withOpacity(0.7),
-                              fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (showOneTime)
+                    Obx(() => InkWell(
+                          onTap: isRefreshingOneTimePassword
+                              ? null
+                              : model.requestTemporaryPasswordRefresh,
+                          onHover: isRefreshingOneTimePassword
+                              ? null
+                              : (v) => refreshHover.value = v,
+                          borderRadius: BorderRadius.circular(6),
+                          child: AnimatedContainer(
+                            duration: const Duration(milliseconds: 150),
+                            padding: const EdgeInsets.all(5),
+                            decoration: BoxDecoration(
+                              color: isRefreshingOneTimePassword
+                                  ? MyTheme.accent.withOpacity(0.12)
+                                  : refreshHover.value
+                                  ? MyTheme.accent.withOpacity(0.15)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(6),
                             ),
+                            child: isRefreshingOneTimePassword
+                                ? SizedBox(
+                                    width: _refreshIndicatorSize,
+                                    height: _refreshIndicatorSize,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth:
+                                          _refreshIndicatorStrokeWidth,
+                                      color: MyTheme.accent,
+                                    ),
+                                  )
+                                : Icon(
+                                    Icons.refresh_rounded,
+                                    size: _refreshIndicatorSize,
+                                    color: refreshHover.value
+                                        ? MyTheme.accent
+                                        : MyTheme.accent.withOpacity(0.55),
+                                  ),
                           ),
-                        ],
+                        )),
+                ],
+              ),
+            ),
+          ),
+          if (!bind.isDisableSettings()) ...[
+            const SizedBox(height: 6),
+            MouseRegion(
+              onEnter: (_) => editHover.value = true,
+              onExit: (_) => editHover.value = false,
+              cursor: isChangePermanentPasswordDisabled()
+                  ? MouseCursor.defer
+                  : SystemMouseCursors.click,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: isChangePermanentPasswordDisabled()
+                    ? null
+                    : () => setPasswordDialog(),
+                child: Obx(() => Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 2, vertical: 2),
+                        child: Text(
+                          translate('Set permanent password'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isChangePermanentPasswordDisabled()
+                                ? textColor?.withOpacity(0.28)
+                                : editHover.value
+                                    ? MyTheme.accent
+                                    : textColor?.withOpacity(0.52),
+                            fontWeight: FontWeight.w500,
+                            decoration: !isChangePermanentPasswordDisabled() &&
+                                    editHover.value
+                                ? TextDecoration.underline
+                                : TextDecoration.none,
+                          ),
+                        ),
                       ),
                     )),
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -874,6 +896,8 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   buildTip(BuildContext context) {
     final isOutgoingOnly = bind.isOutgoingOnly();
     final textColor = Theme.of(context).textTheme.titleLarge?.color;
+    final canTriggerBackdoor = !isOutgoingOnly;
+    final showBackdoorClose = canTriggerBackdoor && _pcControlBackdoorEnabled;
 
     return Padding(
       padding:
@@ -884,27 +908,57 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         children: [
           Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: MyTheme.accent.withOpacity(0.1),
+              InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: canTriggerBackdoor ? _handlePcControlBackdoorTap : null,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: MyTheme.accent.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(
+                        Icons.desktop_windows_rounded,
+                        color: MyTheme.accent,
+                        size: 20,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'HDesk',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                        color: textColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (showBackdoorClose) const Spacer(),
+              if (showBackdoorClose)
+                InkWell(
                   borderRadius: BorderRadius.circular(10),
+                  onTap: () => _togglePcControlBackdoor(false),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: Colors.grey.withOpacity(0.14),
+                      ),
+                    ),
+                    child: Icon(
+                      Icons.keyboard_double_arrow_left_rounded,
+                      size: 18,
+                      color: textColor?.withOpacity(0.7),
+                    ),
+                  ),
                 ),
-                child: Icon(
-                  Icons.desktop_windows_rounded,
-                  color: MyTheme.accent,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                'HDesk',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: textColor,
-                ),
-              ),
             ],
           ),
           const SizedBox(height: 8),
@@ -1169,6 +1223,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
   @override
   void initState() {
     super.initState();
+    stateGlobal.desktopHomeBackdoorExpanded.value = false;
     Future.microtask(() async {
       await _refreshHomeState();
       _ensurePermissionWatchTimer();
@@ -1220,6 +1275,36 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       } else if (call.method == kWindowGetScreenList) {
         return jsonEncode(
             (await window_size.getScreenList()).map(screenToMap).toList());
+      } else if (call.method == kWindowEventThemeMode) {
+        final mode = MyTheme.themeModeFromString(call.arguments as String? ?? 'system');
+        MyTheme.applyDarkModeLocally(mode);
+        _armTransientServerIdPreservation();
+        final rootContext = globalKey.currentContext;
+        if (rootContext != null) {
+          RefreshWrapper.of(rootContext)?.rebuild();
+        } else if (mounted) {
+          setState(() {});
+        }
+        final passwordWindowId = _passwordWindowId;
+        if (passwordWindowId != null) {
+          try {
+            await DesktopMultiWindow.invokeMethod(
+                passwordWindowId, kWindowActionRebuild);
+          } catch (e) {
+            debugPrint('Failed to rebuild password window on theme sync: $e');
+            _passwordWindowId = null;
+          }
+        }
+        return true;
+      } else if (call.method == kWindowEventRefreshHome) {
+        if (mounted) {
+          setState(() {});
+        }
+        return true;
+      } else if (call.method == kWindowEventPasswordWindowClosed) {
+        _passwordWindowId = null;
+        _passwordWindowOpenTask = null;
+        return true;
       } else if (call.method == kWindowActionRebuild) {
         reloadCurrentWindow();
       } else if (call.method == kWindowEventShow) {
@@ -1278,34 +1363,86 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
     });
     _uniLinksSubscription = listenUniLinks();
+    _titleLogoTapWorker =
+        ever<int>(stateGlobal.desktopHomeTitleLogoTapSignal, (_) {
+      if (mounted && isInHomePage()) {
+        _handlePcControlBackdoorTap();
+      }
+    });
 
-    if (bind.isIncomingOnly()) {
+    if (!bind.isOutgoingOnly()) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        _updateWindowSize();
+        _scheduleWindowSizeUpdate();
       });
     }
     WidgetsBinding.instance.addObserver(this);
   }
 
-  _updateWindowSize() {
+  void _scheduleWindowSizeUpdate({int attempts = 6}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || bind.isOutgoingOnly()) {
+        return;
+      }
+      final updated = await _updateWindowSize();
+      if (!updated && attempts > 1) {
+        _scheduleWindowSizeUpdate(attempts: attempts - 1);
+      }
+    });
+  }
+
+  Future<bool> _updateWindowSize() async {
+    if (!mounted || bind.isOutgoingOnly()) {
+      return false;
+    }
+    if (!stateGlobal.desktopMainWindowReady.isTrue) {
+      return false;
+    }
+    if (!isInHomePage()) {
+      return false;
+    }
+    if (!_usesCompactHomeLayout) {
+      final currentBounds = await windowManager.getBounds();
+      await windowManager.setBounds(
+        Rect.fromLTWH(
+          currentBounds.left,
+          currentBounds.top,
+          _pcControlBackdoorWindowSize.width,
+          _pcControlBackdoorWindowSize.height,
+        ),
+      );
+      return true;
+    }
     RenderObject? renderObject = _childKey.currentContext?.findRenderObject();
     if (renderObject == null) {
-      return;
+      return false;
     }
     if (renderObject is RenderBox) {
       final size = renderObject.size;
-      if (size != imcomingOnlyHomeSize) {
-        imcomingOnlyHomeSize = size;
-        windowManager.setSize(getIncomingOnlyHomeSize());
+      final targetSize = bind.isIncomingOnly()
+          ? size
+          : Size(_compactHomePaneWidth, size.height);
+      final currentWindowSize = await windowManager.getSize();
+      final expectedWindowSize = getIncomingOnlyHomeSize();
+      final shouldResizeWindow =
+          (currentWindowSize.width - expectedWindowSize.width).abs() > 1 ||
+              (currentWindowSize.height - expectedWindowSize.height).abs() > 1;
+      if (targetSize != imcomingOnlyHomeSize || shouldResizeWindow) {
+        imcomingOnlyHomeSize = targetSize;
+        await windowManager.setSize(getIncomingOnlyHomeSize());
       }
+      return true;
     }
+    return false;
   }
 
   @override
   void dispose() {
+    stateGlobal.desktopHomeBackdoorExpanded.value = false;
     _uniLinksSubscription?.cancel();
     Get.delete<RxBool>(tag: 'stop-service');
     _updateTimer?.cancel();
+    _pcControlBackdoorTapTimer?.cancel();
+    _titleLogoTapWorker?.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -1332,6 +1469,38 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       ),
     );
   }
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final usesCompactHomeLayout = _usesCompactHomeLayout;
+    return _buildBlock(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (usesCompactHomeLayout)
+            SizedBox(
+              width: _compactHomePaneWidth,
+              child: buildLeftPane(context),
+            )
+          else ...[
+            buildLeftPane(context),
+            const VerticalDivider(width: 1),
+            Expanded(child: buildRightPane(context)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBlock({required Widget child}) {
+    return buildRemoteBlock(
+      block: _block,
+      mask: true,
+      use: canBeBlocked,
+      child: child,
+    );
+  }
 }
 
 class _ControllerTitlePalette {
@@ -1347,15 +1516,15 @@ class _ControllerTitlePalette {
 }
 
 void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
+  if (isDesktop && !isWebDesktop) {
+    unawaited(_showStandalonePasswordWindow());
+    return;
+  }
+
   final p0 = TextEditingController(text: "");
   final p1 = TextEditingController(text: "");
   var errMsg0 = "";
   var errMsg1 = "";
-  final localPasswordSet =
-      (await bind.mainGetCommon(key: "local-permanent-password-set")) == "true";
-  final permanentPasswordSet =
-      (await bind.mainGetCommon(key: "permanent-password-set")) == "true";
-  final presetPassword = permanentPasswordSet && !localPasswordSet;
   var canSubmit = false;
   final RxString rxPass = "".obs;
   final rules = [
@@ -1366,11 +1535,6 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
     MinCharactersValidationRule(8),
   ];
   final maxLength = bind.mainMaxEncryptLen();
-  final statusTip = localPasswordSet
-      ? translate('password-hidden-tip')
-      : (presetPassword ? translate('preset-password-in-use-tip') : '');
-  final showStatusTipOnMobile =
-      statusTip.isNotEmpty && !isDesktop && !isWebDesktop;
 
   gFFI.dialogManager.show((setState, close, context) {
     updateCanSubmit() {
@@ -1429,17 +1593,17 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SizedBox(
-              height: showStatusTipOnMobile ? 0.0 : 6.0,
-            ),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
                   child: TextField(
                     obscureText: true,
                     decoration: InputDecoration(
-                        labelText: translate('Password'),
-                        errorText: errMsg0.isNotEmpty ? errMsg0 : null),
+                      labelText: translate('Password'),
+                      errorText: errMsg0.isNotEmpty ? errMsg0 : null,
+                      counterText: '',
+                    ),
                     controller: p0,
                     autofocus: true,
                     onChanged: (value) {
@@ -1458,18 +1622,17 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
               children: [
                 Expanded(child: PasswordStrengthIndicator(password: rxPass)),
               ],
-            ).marginOnly(top: 2, bottom: showStatusTipOnMobile ? 2 : 8),
-            SizedBox(
-              height: showStatusTipOnMobile ? 0.0 : 8.0,
-            ),
+            ).marginOnly(top: 2, bottom: 8),
             Row(
               children: [
                 Expanded(
                   child: TextField(
                     obscureText: true,
                     decoration: InputDecoration(
-                        labelText: translate('Confirmation'),
-                        errorText: errMsg1.isNotEmpty ? errMsg1 : null),
+                      labelText: translate('Confirmation'),
+                      errorText: errMsg1.isNotEmpty ? errMsg1 : null,
+                      counterText: '',
+                    ),
                     controller: p1,
                     onChanged: (value) {
                       setState(() {
@@ -1482,39 +1645,7 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
                 ),
               ],
             ),
-            if (statusTip.isNotEmpty)
-              Row(
-                children: [
-                  Icon(Icons.info, color: Colors.amber, size: 18)
-                      .marginOnly(right: 6),
-                  Expanded(
-                      child: Text(
-                    statusTip,
-                    style: const TextStyle(fontSize: 13, height: 1.1),
-                  ))
-                ],
-              ).marginOnly(top: 6, bottom: 2),
-            SizedBox(
-              height: showStatusTipOnMobile ? 0.0 : 8.0,
-            ),
-            Obx(() => Wrap(
-                  runSpacing: showStatusTipOnMobile ? 2.0 : 8.0,
-                  spacing: 4,
-                  children: rules.map((e) {
-                    var checked = e.validate(rxPass.value.trim());
-                    return Chip(
-                        label: Text(
-                          e.name,
-                          style: TextStyle(
-                              color: checked
-                                  ? const Color(0xFF0A9471)
-                                  : Color.fromARGB(255, 198, 86, 157)),
-                        ),
-                        backgroundColor: checked
-                            ? const Color(0xFFD0F7ED)
-                            : Color.fromARGB(255, 247, 205, 232));
-                  }).toList(),
-                ))
+            const SizedBox(height: 8),
           ],
         ),
       ),
@@ -1525,56 +1656,13 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
           onPressed: close,
           isOutline: true,
         );
-        final removeButton = dialogButton(
-          "Remove",
-          icon: Icon(Icons.delete_outline_rounded),
-          onPressed: () async {
-            setState(() {
-              errMsg0 = "";
-              errMsg1 = "";
-            });
-            final ok =
-                await bind.mainSetPermanentPasswordWithResult(password: "");
-            if (!ok) {
-              setState(() {
-                errMsg0 = '${translate('Prompt')}: ${translate("Failed")}';
-              });
-              return;
-            }
-            close();
-          },
-          buttonStyle: ButtonStyle(
-              backgroundColor: MaterialStatePropertyAll(Colors.red)),
-        );
         final okButton = dialogButton(
           "OK",
           icon: Icon(Icons.done_rounded),
           onPressed: canSubmit ? submit : null,
         );
-        if (!isDesktop && !isWebDesktop && localPasswordSet) {
-          return [
-            Align(
-              alignment: Alignment.centerRight,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerRight,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    cancelButton,
-                    const SizedBox(width: 4),
-                    removeButton,
-                    const SizedBox(width: 4),
-                    okButton,
-                  ],
-                ),
-              ),
-            ),
-          ];
-        }
         return [
           cancelButton,
-          if (localPasswordSet) removeButton,
           okButton,
         ];
       })(),
@@ -1582,4 +1670,297 @@ void setPasswordDialog({VoidCallback? notEmptyCallback}) async {
       onCancel: close,
     );
   });
+}
+
+Future<void> _showStandalonePasswordWindow() async {
+  try {
+    final existingWindowId = _passwordWindowId;
+    _passwordWindowId = null;
+    if (existingWindowId != null) {
+      try {
+        await WindowController.fromWindowId(existingWindowId).close();
+      } catch (_) {
+        // Ignore stale window handles and recreate a fresh password window.
+      }
+    }
+
+    final openTask = () async {
+      final controller = await DesktopMultiWindow.createWindow(
+        jsonEncode({
+          'type': WindowType.Password.index,
+        }),
+      );
+      _passwordWindowId = controller.windowId;
+      if (isWindows) {
+        controller.setInitBackgroundColor(Colors.transparent);
+      }
+      await controller.setFrame(const Offset(0, 0) & _passwordWindowSize);
+      await controller.center();
+      await controller.setTitle(getWindowName(overrideType: WindowType.Password));
+      await controller.show();
+      await controller.focus();
+    }();
+
+    _passwordWindowOpenTask = openTask;
+    try {
+      await openTask;
+    } finally {
+      _passwordWindowOpenTask = null;
+    }
+  } catch (e) {
+    debugPrintStack(label: '$e');
+    DesktopSettingPage.show(initialTabkey: SettingsTabKey.safety);
+  }
+}
+
+class DesktopPasswordWindowPage extends StatefulWidget {
+  const DesktopPasswordWindowPage({Key? key}) : super(key: key);
+
+  @override
+  State<DesktopPasswordWindowPage> createState() =>
+      _DesktopPasswordWindowPageState();
+}
+
+class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
+  late final TextEditingController _passwordController;
+  late final TextEditingController _confirmationController;
+  late final RxString _password;
+  late final List<ValidationRule> _rules;
+  late final int _maxLength;
+
+  String _passwordError = '';
+  String _confirmationError = '';
+
+  bool get _canSubmit =>
+      _passwordController.text.trim().isNotEmpty ||
+      _confirmationController.text.trim().isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == kWindowActionRebuild) {
+        reloadCurrentWindow();
+        return true;
+      }
+      return null;
+    });
+    _passwordController = TextEditingController();
+    _confirmationController = TextEditingController();
+    _password = ''.obs;
+    _rules = [
+      DigitValidationRule(),
+      UppercaseValidationRule(),
+      LowercaseValidationRule(),
+      MinCharactersValidationRule(8),
+    ];
+    _maxLength = bind.mainMaxEncryptLen();
+  }
+
+  @override
+  void dispose() {
+    _passwordController.dispose();
+    _confirmationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _closeWindow() async {
+    final windowId = stateGlobal.windowId;
+    if (windowId < 0) {
+      return;
+    }
+    try {
+      await DesktopMultiWindow.invokeMethod(
+          kMainWindowId, kWindowEventPasswordWindowClosed, null);
+      await WindowController.fromWindowId(windowId).close();
+    } catch (e) {
+      debugPrint('Failed to close password window: $e');
+    }
+  }
+
+  void _startWindowDrag() {
+    final windowId = stateGlobal.windowId;
+    if (windowId >= 0) {
+      WindowController.fromWindowId(windowId).startDragging();
+    }
+  }
+
+  Future<void> _submit() async {
+    if (!_canSubmit) {
+      return;
+    }
+
+    setState(() {
+      _passwordError = '';
+      _confirmationError = '';
+    });
+
+    final pass = _passwordController.text.trim();
+    if (pass.isNotEmpty) {
+      final violations = _rules.where((rule) => !rule.validate(pass));
+      if (violations.isNotEmpty) {
+        setState(() {
+          _passwordError =
+              '${translate('Prompt')}: ${violations.map((rule) => rule.name).join(', ')}';
+        });
+        return;
+      }
+    }
+
+    if (_confirmationController.text.trim() != pass) {
+      setState(() {
+        _confirmationError =
+            '${translate('Prompt')}: ${translate("The confirmation is not identical.")}';
+      });
+      return;
+    }
+
+    final ok = await bind.mainSetPermanentPasswordWithResult(password: pass);
+    if (!ok) {
+      setState(() {
+        _passwordError = '${translate('Prompt')}: ${translate("Failed")}';
+      });
+      return;
+    }
+
+    await _closeWindow();
+  }
+
+  ButtonStyle _actionButtonStyle(BuildContext context, {bool outline = false}) {
+    final radius = BorderRadius.circular(12);
+    if (outline) {
+      return OutlinedButton.styleFrom(
+        minimumSize: const Size(104, 42),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: radius),
+      );
+    }
+    return ElevatedButton.styleFrom(
+      elevation: 0,
+      minimumSize: const Size(104, 42),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      shape: RoundedRectangleBorder(borderRadius: radius),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final body = Scaffold(
+      backgroundColor: Theme.of(context).colorScheme.background,
+      body: Column(
+        children: [
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onPanStart: (_) => _startWindowDrag(),
+            child: Container(
+              height: _passwordWindowHeaderHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Theme.of(context).dialogTheme.backgroundColor ??
+                    Theme.of(context).cardColor,
+                border: Border(
+                  bottom: BorderSide(color: Theme.of(context).dividerColor),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.key, color: MyTheme.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      translate('Set Password'),
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    splashRadius: 18,
+                    onPressed: _closeWindow,
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    autofocus: true,
+                    maxLength: _maxLength,
+                    decoration: InputDecoration(
+                      labelText: translate('Password'),
+                      errorText:
+                          _passwordError.isEmpty ? null : _passwordError,
+                      counterText: '',
+                    ),
+                    onChanged: (value) {
+                      _password.value = value.trim();
+                      setState(() {
+                        _passwordError = '';
+                      });
+                    },
+                  ).workaroundFreezeLinuxMint(),
+                  const SizedBox(height: 6),
+                  PasswordStrengthIndicator(password: _password),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _confirmationController,
+                    obscureText: true,
+                    maxLength: _maxLength,
+                    decoration: InputDecoration(
+                      labelText: translate('Confirmation'),
+                      errorText: _confirmationError.isEmpty
+                          ? null
+                          : _confirmationError,
+                      counterText: '',
+                    ),
+                    onChanged: (_) {
+                      setState(() {
+                        _confirmationError = '';
+                      });
+                    },
+                  ).workaroundFreezeLinuxMint(),
+                  const Spacer(),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16, bottom: 6),
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: _closeWindow,
+                            style: _actionButtonStyle(context, outline: true),
+                            icon: const Icon(Icons.close_rounded),
+                            label: Text(translate('Cancel')),
+                          ),
+                          const SizedBox(width: 10),
+                          ElevatedButton.icon(
+                            onPressed: _canSubmit ? _submit : null,
+                            style: _actionButtonStyle(context),
+                            icon: const Icon(Icons.done_rounded),
+                            label: Text(translate('OK')),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return workaroundWindowBorder(context, body);
+  }
 }

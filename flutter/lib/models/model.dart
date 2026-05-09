@@ -934,6 +934,7 @@ class FfiModel with ChangeNotifier {
           sessionId, dialogManager, 'terminal-admin-login-tip', false);
     } else if (type == 'restarting') {
       showMsgBox(sessionId, type, title, text, link, false, dialogManager,
+          peerId,
           hasCancel: false);
     } else if (type == 'wait-remote-accept-nook') {
       showWaitAcceptDialog(sessionId, type, title, text, dialogManager);
@@ -950,13 +951,14 @@ class FfiModel with ChangeNotifier {
     } else if (title == 'Privacy mode') {
       final hasRetry = evt['hasRetry'] == 'true';
       showPrivacyFailedDialog(
-          sessionId, type, title, text, link, hasRetry, dialogManager);
+          sessionId, type, title, text, link, hasRetry, dialogManager, peerId);
     } else {
       var hasRetry = evt['hasRetry'] == 'true';
       if (!hasRetry) {
         hasRetry = shouldAutoRetryOnOffline(type, title, text);
       }
-      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
+      showMsgBox(
+          sessionId, type, title, text, link, hasRetry, dialogManager, peerId);
     }
   }
 
@@ -1026,23 +1028,18 @@ class FfiModel with ChangeNotifier {
   /// Show a message box with [type], [title] and [text].
   showMsgBox(SessionID sessionId, String type, String title, String text,
       String link, bool hasRetry, OverlayDialogManager dialogManager,
+      String peerId,
       {bool? hasCancel}) async {
     final noteAllowed = parent.target != null &&
         allowAskForNoteAtEndOfConnection(parent.target, false) &&
         (title == "Connection Error" || type == "restarting");
-    final shouldAutoCloseWindow = !hasRetry &&
-      isDesktop &&
-      parent.target != null &&
-      desktopType != DesktopType.main &&
-      desktopType != DesktopType.cm &&
-      (title == "Connection Error" || type == "restarting");
     final showNoteEdit = noteAllowed && !hasRetry;
     if (showNoteEdit) {
       await showConnEndAuditDialogCloseCanceled(
           ffi: parent.target!, type: type, title: title, text: text);
       closeConnection();
     } else {
-      VoidCallback? onSubmit;
+      Future<void> Function()? onSubmit;
       if (noteAllowed && hasRetry) {
         final ffi = parent.target!;
         onSubmit = () async {
@@ -1057,8 +1054,7 @@ class FfiModel with ChangeNotifier {
           hasCancel: hasCancel,
           reconnect: hasRetry ? reconnect : null,
           reconnectTimeout: hasRetry ? _reconnects : null,
-          onSubmit: onSubmit,
-          submitTimeout: shouldAutoCloseWindow ? 3 : null);
+          onSubmit: onSubmit);
     }
     _timer?.cancel();
     if (hasRetry) {
@@ -1171,12 +1167,14 @@ class FfiModel with ChangeNotifier {
       String text,
       String link,
       bool hasRetry,
-      OverlayDialogManager dialogManager) {
+      OverlayDialogManager dialogManager,
+      String peerId) {
     // There are display changes on the remote side,
     // which will cause some messages to refresh the canvas and dismiss dialogs.
     // So we add a delay here to ensure the dialog is displayed.
     Future.delayed(Duration(milliseconds: 3000), () {
-      showMsgBox(sessionId, type, title, text, link, hasRetry, dialogManager);
+      showMsgBox(
+          sessionId, type, title, text, link, hasRetry, dialogManager, peerId);
     });
   }
 
@@ -4310,11 +4308,23 @@ class FFI {
     inputModel.resetModifiers();
     // Dispose relative mouse mode resources to ensure cursor is restored
     inputModel.disposeRelativeMouseMode();
+    inputModel.disposeSideButtonTracking();
     if (closeSession) {
       await bind.sessionClose(sessionId: sessionId);
     }
     debugPrint('model $id closed');
     id = '';
+  }
+
+  Future<void> closeSessionAndConnection({String? connectionId}) async {
+    final targetId = connectionId ?? (id.isNotEmpty ? id : null);
+    try {
+      if (!closed) {
+        await close(closeSession: true);
+      }
+    } finally {
+      closeConnection(id: targetId);
+    }
   }
 
   void setMethodCallHandler(FMethod callback) {

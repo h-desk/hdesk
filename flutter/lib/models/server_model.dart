@@ -8,6 +8,7 @@ import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/models/chat_model.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/models/temporary_password_refresh_utils.dart';
 import 'package:get/get.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -146,6 +147,7 @@ class ServerModel with ChangeNotifier {
   String _approveMode = "";
   int _zeroClientLengthCounter = 0;
   bool _requestedTemporaryPasswordRefresh = false;
+  DateTime? _temporaryPasswordRefreshRequestedAt;
 
   late String _emptyIdShow;
   late final IDTextEditingController _serverId;
@@ -157,6 +159,7 @@ class ServerModel with ChangeNotifier {
 
   final List<Client> _clients = [];
   final List<DesktopControlledSession> _desktopControlledSessions = [];
+  final Set<int> _pendingDesktopControlledCloseIds = <int>{};
   final Set<int> _notifiedDesktopConnectionIds = <int>{};
   String _lastDesktopControlledSessionsOptionValue = '';
   String _lastPublishedDesktopControlledSessionsOptionValue = '';
@@ -238,6 +241,73 @@ class ServerModel with ChangeNotifier {
   TextEditingController get serverId => _serverId;
 
   TextEditingController get serverPasswd => _serverPasswd;
+
+  bool get isRefreshingTemporaryPassword => _requestedTemporaryPasswordRefresh;
+
+  String get _generatingPasswordText => translate("Generating ...");
+
+  bool get _shouldRetryTemporaryPasswordRefresh {
+    return shouldRetryTemporaryPasswordRefresh(
+      isRefreshingTemporaryPassword: _requestedTemporaryPasswordRefresh,
+      lastRequestedAt: _temporaryPasswordRefreshRequestedAt,
+      now: DateTime.now(),
+    );
+  }
+
+  void _markTemporaryPasswordRefreshPending() {
+    _requestedTemporaryPasswordRefresh = true;
+    _temporaryPasswordRefreshRequestedAt = DateTime.now();
+    _serverPasswd.text = _generatingPasswordText;
+  }
+
+  void _clearTemporaryPasswordRefreshPending() {
+    _requestedTemporaryPasswordRefresh = false;
+    _temporaryPasswordRefreshRequestedAt = null;
+  }
+
+  bool _syncTemporaryPasswordState({
+    required bool useOneTimePassword,
+    required String temporaryPassword,
+  }) {
+    final oldPwdText = _serverPasswd.text;
+    final wasRefreshingTemporaryPassword =
+        _requestedTemporaryPasswordRefresh;
+
+    if (!useOneTimePassword) {
+      _serverPasswd.text = '-';
+      _clearTemporaryPasswordRefreshPending();
+    } else if (temporaryPassword.isNotEmpty) {
+      _clearTemporaryPasswordRefreshPending();
+      if (_serverPasswd.text != temporaryPassword) {
+        _serverPasswd.text = temporaryPassword;
+      }
+    } else {
+      if (_serverPasswd.text != _generatingPasswordText) {
+        _serverPasswd.text = _generatingPasswordText;
+      }
+      if (_shouldRetryTemporaryPasswordRefresh) {
+        _markTemporaryPasswordRefreshPending();
+        bind.mainUpdateTemporaryPassword();
+      }
+    }
+
+    return oldPwdText != _serverPasswd.text ||
+        wasRefreshingTemporaryPassword != _requestedTemporaryPasswordRefresh;
+  }
+
+  void requestTemporaryPasswordRefresh() {
+    if (!_shouldRetryTemporaryPasswordRefresh) {
+      return;
+    }
+    final needsUiUpdate =
+        !_requestedTemporaryPasswordRefresh ||
+        _serverPasswd.text != _generatingPasswordText;
+    _markTemporaryPasswordRefreshPending();
+    if (needsUiUpdate) {
+      notifyListeners();
+    }
+    bind.mainUpdateTemporaryPassword();
+  }
 
   List<Client> get clients => _clients;
 
@@ -427,31 +497,13 @@ class ServerModel with ChangeNotifier {
     var stopped = connectionStatus?['stop_service'] is bool
       ? connectionStatus!['stop_service'] as bool
       : await mainGetBoolOption(kOptionStopService);
-    final oldPwdText = _serverPasswd.text;
     final useOneTimePassword = !(stopped ||
         verificationMethod == kUsePermanentPassword ||
         _approveMode == 'click');
-    if (!useOneTimePassword) {
-      _serverPasswd.text = '-';
-      _requestedTemporaryPasswordRefresh = false;
-    } else {
-      if (temporaryPassword.isNotEmpty) {
-        _requestedTemporaryPasswordRefresh = false;
-        if (_serverPasswd.text != temporaryPassword) {
-          _serverPasswd.text = temporaryPassword;
-        }
-      } else {
-        final generatingText = translate("Generating ...");
-        if (_serverPasswd.text != generatingText) {
-          _serverPasswd.text = generatingText;
-        }
-        if (!_requestedTemporaryPasswordRefresh) {
-          _requestedTemporaryPasswordRefresh = true;
-          bind.mainUpdateTemporaryPassword();
-        }
-      }
-    }
-    if (oldPwdText != _serverPasswd.text) {
+    if (_syncTemporaryPasswordState(
+      useOneTimePassword: useOneTimePassword,
+      temporaryPassword: temporaryPassword,
+    )) {
       update = true;
     }
     if (_verificationMethod != verificationMethod) {
@@ -459,7 +511,8 @@ class ServerModel with ChangeNotifier {
       update = true;
     }
     if (_temporaryPasswordLength != temporaryPasswordLength) {
-      if (_temporaryPasswordLength.isNotEmpty) {
+      if (_temporaryPasswordLength.isNotEmpty && useOneTimePassword) {
+        _markTemporaryPasswordRefreshPending();
         bind.mainUpdateTemporaryPassword();
       }
       _temporaryPasswordLength = temporaryPasswordLength;
@@ -910,6 +963,7 @@ class ServerModel with ChangeNotifier {
       final id = int.parse(evt['id'] as String);
       final close = (evt['close'] as String) == 'true';
       _notifiedDesktopConnectionIds.remove(id);
+      _pendingDesktopControlledCloseIds.remove(id);
       if (_clients.any((c) => c.id == id)) {
         final index = _clients.indexWhere((client) => client.id == id);
         if (index >= 0) {
@@ -939,6 +993,7 @@ class ServerModel with ChangeNotifier {
         _clients.map((client) => bind.cmCloseConnection(connId: client.id)));
     _clients.clear();
     _desktopControlledSessions.clear();
+    _pendingDesktopControlledCloseIds.clear();
     _notifiedDesktopConnectionIds.clear();
     _lastDesktopControlledSessionsOptionValue = '';
     tabController.state.value.tabs.clear();
@@ -1053,6 +1108,8 @@ class ServerModel with ChangeNotifier {
     _desktopControlledSessions
       ..clear()
       ..addAll(nextSessions.where((session) => session.id > 0));
+    final activeIds = _desktopControlledSessions.map((session) => session.id).toSet();
+    _pendingDesktopControlledCloseIds.removeWhere((id) => !activeIds.contains(id));
     DesktopCrashTrace.log(
         'ServerModel.syncDesktopControlledSessions count=${_desktopControlledSessions.length} valueLength=${raw.length}');
     _syncDesktopConnectionNotifications();
@@ -1070,10 +1127,15 @@ class ServerModel with ChangeNotifier {
   }
 
   Future<void> _requestDesktopControlledSessionsClose(List<int> ids) async {
-    final distinctIds = ids.where((id) => id > 0).toSet().toList(growable: false);
+    final distinctIds = ids
+        .where((id) => id > 0)
+        .where((id) => !_pendingDesktopControlledCloseIds.contains(id))
+        .toSet()
+        .toList(growable: false);
     if (distinctIds.isEmpty) {
       return;
     }
+    _pendingDesktopControlledCloseIds.addAll(distinctIds);
     final payload = jsonEncode({
       'token': DateTime.now().microsecondsSinceEpoch.toString(),
       'ids': distinctIds,
@@ -1084,6 +1146,7 @@ class ServerModel with ChangeNotifier {
       await bind.mainSetOption(
           key: kDesktopControlledCloseRequestOptionKey, value: payload);
     } catch (e) {
+      _pendingDesktopControlledCloseIds.removeAll(distinctIds);
       DesktopCrashTrace.log(
           'ServerModel.requestDesktopControlledSessionsClose failed error=$e');
     }
@@ -1125,7 +1188,7 @@ class ServerModel with ChangeNotifier {
       for (final connId in closeIds) {
         DesktopCrashTrace.log(
             'ServerModel.consumeDesktopControlledCloseRequest close connId=$connId token=$token');
-        bind.cmLoginRes(connId: connId, res: false);
+        await bind.cmCloseConnection(connId: connId);
       }
     } catch (e) {
       DesktopCrashTrace.log(

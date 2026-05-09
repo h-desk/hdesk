@@ -79,32 +79,73 @@ class PasswordStrengthIndicator extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Obx(() {
-      var strength = estimatePasswordStrength(password.value);
-      return Row(
+      final value = password.value.trim();
+      final strength = value.isEmpty ? 0.0 : estimatePasswordStrength(value);
+      final fillColor =
+          value.isEmpty ? const Color(0xFF6B7280) : _getColor(strength);
+      final label = value.isEmpty ? '' : translate(_getLabel(strength));
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-              child: _indicator(
-                  password.isEmpty ? Colors.grey : _getColor(strength))),
-          Expanded(
-              child: _indicator(password.isEmpty || strength < weakMedium
-                  ? Colors.grey
-                  : _getColor(strength))),
-          Expanded(
-              child: _indicator(password.isEmpty || strength < mediumStrong
-                  ? Colors.grey
-                  : _getColor(strength))),
-          Text(password.isEmpty ? '' : translate(_getLabel(strength)))
-              .marginOnly(left: password.isEmpty ? 0 : 8),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final width = constraints.maxWidth;
+              final fillWidth = value.isEmpty
+                  ? 0.0
+                  : (width * strength.clamp(0.12, 1.0)).toDouble();
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  height: 10,
+                  color: Theme.of(context).dividerColor.withOpacity(0.16),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      curve: Curves.easeOutCubic,
+                      width: fillWidth,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        gradient: LinearGradient(
+                          colors: [
+                            fillColor.withOpacity(0.72),
+                            fillColor,
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: fillColor.withOpacity(0.22),
+                            blurRadius: 10,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+          if (label.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: fillColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: fillColor,
+                ),
+              ),
+            ),
         ],
       );
     });
-  }
-
-  Widget _indicator(Color color) {
-    return Container(
-      height: 8,
-      color: color,
-    );
   }
 
   String _getLabel(double strength) {
@@ -119,11 +160,11 @@ class PasswordStrengthIndicator extends StatelessWidget {
 
   Color _getColor(double strength) {
     if (strength < weakMedium) {
-      return Colors.yellow;
+      return const Color(0xFFE67E22);
     } else if (strength < mediumStrong) {
-      return Colors.blue;
+      return const Color(0xFF3B82F6);
     } else {
-      return Colors.green;
+      return const Color(0xFF16A34A);
     }
   }
 }

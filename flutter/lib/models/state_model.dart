@@ -19,6 +19,9 @@ class StateGlobal {
   final svcStatus = SvcStatus.notReady.obs;
   final RxInt videoConnCount = 0.obs;
   final RxBool isFocused = false.obs;
+  final RxBool desktopMainWindowReady = false.obs;
+  final RxBool desktopHomeBackdoorExpanded = false.obs;
+  final RxInt desktopHomeTitleLogoTapSignal = 0.obs;
   // for mobile and web
   bool isInMainPage = true;
   bool isWebVisible = true;
@@ -130,6 +133,10 @@ class StateGlobal {
   setInputSource(SessionID sessionId, String v) async {
     await bind.mainSetInputSource(sessionId: sessionId, value: v);
     _inputSource = bind.mainGetInputSource();
+  }
+
+  void emitDesktopHomeTitleLogoTap() {
+    desktopHomeTitleLogoTapSignal.value++;
   }
 
   StateGlobal._() {
