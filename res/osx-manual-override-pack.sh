@@ -172,9 +172,22 @@ create_manual_override_dmg() {
   echo "$dmg_path"
 }
 
+create_manual_override_zip() {
+  local app_path="$1"
+  local arch="$2"
+  local version="$3"
+  local product_name="${4:-$(basename "$app_path" .app)}"
+  local zip_path="$OUTPUT_DIR/${product_name}-${version}-manual-override-${arch}.zip"
+
+  rm -f "$zip_path"
+  ditto -c -k --keepParent --sequesterRsrc "$app_path" "$zip_path"
+
+  echo "$zip_path"
+}
+
 build_arch_package() {
   local raw_arch="$1"
-  local arch rust_target vcpkg_triplet derived_data_path release_dir app_src app_name product_name out_dir out_app version dmg_path deployment_target
+  local arch rust_target vcpkg_triplet derived_data_path release_dir app_src app_name product_name out_dir out_app version zip_path dmg_path deployment_target
 
   arch="$(normalize_arch "$raw_arch")"
   rust_target="$(rust_target_for_arch "$arch")"
@@ -229,10 +242,14 @@ build_arch_package() {
   echo "==> Ad-hoc signing $app_name"
   sign_app "$out_app"
 
+  echo "==> Packaging ZIP for $arch"
+  zip_path="$(create_manual_override_zip "$out_app" "$arch" "$version" "$product_name")"
+
   echo "==> Packaging DMG for $arch"
   dmg_path="$(create_manual_override_dmg "$out_app" "$arch" "$version" "$product_name")"
 
   echo "Built app: $out_app"
+  echo "Built zip: $zip_path"
   echo "Built dmg: $dmg_path"
 }
 

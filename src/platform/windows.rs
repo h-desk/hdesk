@@ -278,6 +278,29 @@ fn looks_like_bottom_input_band(
 
 fn cursor_surface_explicitly_noneditable(class_name: &str) -> bool {
     let class_name = class_name.to_lowercase();
+    let exact_noneditable = [
+        "aui-header",
+        "horizontaltabstripregionview",
+        "image",
+        "listviewitem",
+        "tab",
+    ];
+    if exact_noneditable.iter().any(|name| class_name == *name) {
+        return true;
+    }
+
+    let fragment_noneditable = [
+        "embedded-image",
+        "header-main",
+        "tasklistbuttonautomationpeer",
+    ];
+    if fragment_noneditable
+        .iter()
+        .any(|fragment| class_name.contains(fragment))
+    {
+        return true;
+    }
+
     // "no-user-select" means the surface blocks browser-native text selection.
     // However, VS Code's Monaco editor applies this class to the code editing
     // surface which DOES accept keyboard input via a hidden textarea.
