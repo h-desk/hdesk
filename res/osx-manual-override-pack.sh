@@ -24,6 +24,46 @@ export CPLUS_INCLUDE_PATH
 export VCPKG_INSTALLED_ROOT
 export MACOSX_DEPLOYMENT_TARGET
 
+patch_pod_toolchain_placeholders() {
+  local support_dir="$WORKSPACE_DIR/flutter/macos/Pods/Target Support Files"
+  local file
+  local patched=0
+
+  if [[ ! -d "$support_dir" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r -d '' file; do
+    sed -i '' 's/DT_TOOLCHAIN_DIR/TOOLCHAIN_DIR/g' "$file"
+    patched=1
+  done < <(rg --null -l 'DT_TOOLCHAIN_DIR' "$support_dir" || true)
+
+  if [[ "$patched" -eq 1 ]]; then
+    echo "==> Patched CocoaPods toolchain placeholders for Xcode compatibility"
+  fi
+}
+
+prepare_flutter_macos_pods() {
+  local macos_dir="$WORKSPACE_DIR/flutter/macos"
+  local podfile_lock="$macos_dir/Podfile.lock"
+  local manifest_lock="$macos_dir/Pods/Manifest.lock"
+
+  if [[ ! -f "$manifest_lock" ]] || [[ ! -f "$podfile_lock" ]] || ! cmp -s "$podfile_lock" "$manifest_lock"; then
+    if ! command -v pod >/dev/null 2>&1; then
+      echo "CocoaPods is required to sync flutter/macos dependencies." >&2
+      return 1
+    fi
+
+    echo "==> Syncing CocoaPods sandbox"
+    (
+      cd "$macos_dir"
+      pod install
+    )
+  fi
+
+  patch_pod_toolchain_placeholders
+}
+
 deployment_target_for_arch() {
   local arch="$1"
 
@@ -244,6 +284,7 @@ main() {
   mkdir -p "$DMG_STAGE_ROOT"
 
   cd "$WORKSPACE_DIR"
+  prepare_flutter_macos_pods
 
   for raw_arch in $MACOS_ARCHES; do
     build_arch_package "$raw_arch"

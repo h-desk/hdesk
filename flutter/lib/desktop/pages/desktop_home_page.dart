@@ -43,6 +43,12 @@ const _passwordWindowSize = Size(560, 380);
 const _macOSPasswordWindowSize = Size(480, 340);
 const _passwordWindowHeaderHeight = 64.0;
 const _kMacOSWindowControlsInset = 78.0;
+const _kMacOSAccessibilitySettingsUrl =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility';
+const _kMacOSInputMonitoringSettingsUrl =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent';
+const _kMacOSScreenRecordingSettingsUrl =
+  'x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture';
 
 int? _passwordWindowId;
 Future<void>? _passwordWindowOpenTask;
@@ -157,6 +163,41 @@ class _DesktopHomePageState extends State<DesktopHomePage>
         _updateTimer = null;
       }
     });
+  }
+
+  Future<void> _openMacOSPermissionSettings(String url) async {
+    final uri = Uri.parse(url);
+    final opened = await launchUrl(uri);
+    if (!opened) {
+      debugPrint('Failed to open macOS permission settings: $url');
+    }
+  }
+
+  Future<void> _configureMacOSScreenRecordingPermission() async {
+    watchIsCanScreenRecording = true;
+    if (mounted) {
+      setState(() {});
+    }
+    _ensurePermissionWatchTimer();
+    await _openMacOSPermissionSettings(_kMacOSScreenRecordingSettingsUrl);
+  }
+
+  Future<void> _configureMacOSAccessibilityPermission() async {
+    watchIsProcessTrust = true;
+    if (mounted) {
+      setState(() {});
+    }
+    _ensurePermissionWatchTimer();
+    await _openMacOSPermissionSettings(_kMacOSAccessibilitySettingsUrl);
+  }
+
+  Future<void> _configureMacOSInputMonitoringPermission() async {
+    watchIsInputMonitoring = true;
+    if (mounted) {
+      setState(() {});
+    }
+    _ensurePermissionWatchTimer();
+    await _openMacOSPermissionSettings(_kMacOSInputMonitoringSettingsUrl);
   }
 
   void _resetPcControlBackdoorTapProgress() {
@@ -625,11 +666,7 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                         ),
                         const SizedBox(width: 8),
                         TextButton(
-                          onPressed: () {
-                            bind.mainIsCanScreenRecording(prompt: true);
-                            watchIsCanScreenRecording = true;
-                            setState(() {});
-                          },
+                          onPressed: _configureMacOSScreenRecordingPermission,
                           style: TextButton.styleFrom(
                             foregroundColor: const Color(0xFFE6A15A),
                             padding: const EdgeInsets.symmetric(
@@ -1003,27 +1040,26 @@ class _DesktopHomePageState extends State<DesktopHomePage>
       }
     } else if (isMacOS) {
       final isOutgoingOnly = bind.isOutgoingOnly();
+      final hasControlledSessions =
+          gFFI.serverModel.desktopControlledSessions.isNotEmpty;
       if (!(isOutgoingOnly || bind.mainIsCanScreenRecording(prompt: false))) {
-        return buildInstallCard("Permissions", "config_screen", "Configure",
-            () async {
-          bind.mainIsCanScreenRecording(prompt: true);
-          watchIsCanScreenRecording = true;
-          _ensurePermissionWatchTimer();
-        }, help: 'Help', link: translate("doc_mac_permission"));
+        if (hasControlledSessions) {
+          return Container();
+        }
+        return buildInstallCard(
+            "Permissions", "config_screen", "Configure", () async {
+          await _configureMacOSScreenRecordingPermission();
+        });
       } else if (!isOutgoingOnly && !bind.mainIsProcessTrusted(prompt: false)) {
-        return buildInstallCard("Permissions", "config_acc", "Configure",
-            () async {
-          bind.mainIsProcessTrusted(prompt: true);
-          watchIsProcessTrust = true;
-          _ensurePermissionWatchTimer();
-        }, help: 'Help', link: translate("doc_mac_permission"));
+        return buildInstallCard(
+            "Permissions", "config_acc", "Configure", () async {
+          await _configureMacOSAccessibilityPermission();
+        });
       } else if (!bind.mainIsCanInputMonitoring(prompt: false)) {
-        return buildInstallCard("Permissions", "config_input", "Configure",
-            () async {
-          bind.mainIsCanInputMonitoring(prompt: true);
-          watchIsInputMonitoring = true;
-          _ensurePermissionWatchTimer();
-        }, help: 'Help', link: translate("doc_mac_permission"));
+        return buildInstallCard(
+            "Permissions", "config_input", "Configure", () async {
+          await _configureMacOSInputMonitoringPermission();
+        });
       } else if (!isOutgoingOnly &&
           !svcStopped.value &&
           bind.mainIsInstalled() &&
