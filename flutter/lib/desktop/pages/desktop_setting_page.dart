@@ -46,6 +46,7 @@ const double _kContentFontSize = 15;
 const Color _accentColor = MyTheme.accent;
 const double _kSectionSpacing = 8;
 const double _kSettingsDialogHeaderHeight = 64;
+const double _kMacOSWindowControlsInset = 78;
 
 _DesktopSettingPageState? _activeSettingsPageState;
 int? _settingsWindowId;
@@ -450,7 +451,9 @@ class _DesktopSettingsWindowPageState extends State<DesktopSettingsWindowPage> {
             onPanStart: (_) => _startWindowDrag(),
             child: Container(
               height: _kSettingsDialogHeaderHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: isMacOS
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
                 color: Theme.of(context).dialogTheme.backgroundColor ??
                     Theme.of(context).cardColor,
@@ -460,22 +463,49 @@ class _DesktopSettingsWindowPageState extends State<DesktopSettingsWindowPage> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.settings_rounded, color: _accentColor),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      translate('Settings'),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
+                  if (isMacOS) ...[
+                    const SizedBox(width: _kMacOSWindowControlsInset),
+                    Expanded(
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.settings_rounded,
+                                  color: _accentColor),
+                              const SizedBox(width: 12),
+                              Text(
+                                translate('Settings'),
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    splashRadius: 18,
-                    onPressed: _closeWindow,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
+                    const SizedBox(width: _kMacOSWindowControlsInset),
+                  ] else ...[
+                    const Icon(Icons.settings_rounded, color: _accentColor),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        translate('Settings'),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      splashRadius: 18,
+                      onPressed: _closeWindow,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -40,7 +40,9 @@ const _compactHomePaneWidth = 300.0;
 const _refreshIndicatorSize = 14.0;
 const _refreshIndicatorStrokeWidth = 1.5;
 const _passwordWindowSize = Size(560, 380);
+const _macOSPasswordWindowSize = Size(480, 340);
 const _passwordWindowHeaderHeight = 64.0;
+const _kMacOSWindowControlsInset = 78.0;
 
 int? _passwordWindowId;
 Future<void>? _passwordWindowOpenTask;
@@ -1694,7 +1696,8 @@ Future<void> _showStandalonePasswordWindow() async {
       if (isWindows) {
         controller.setInitBackgroundColor(Colors.transparent);
       }
-      await controller.setFrame(const Offset(0, 0) & _passwordWindowSize);
+      final frameSize = isMacOS ? _macOSPasswordWindowSize : _passwordWindowSize;
+      await controller.setFrame(const Offset(0, 0) & frameSize);
       await controller.center();
       await controller.setTitle(getWindowName(overrideType: WindowType.Password));
       await controller.show();
@@ -1854,7 +1857,9 @@ class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
             onPanStart: (_) => _startWindowDrag(),
             child: Container(
               height: _passwordWindowHeaderHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: isMacOS
+                  ? EdgeInsets.zero
+                  : const EdgeInsets.symmetric(horizontal: 16),
               decoration: BoxDecoration(
                 color: Theme.of(context).dialogTheme.backgroundColor ??
                     Theme.of(context).cardColor,
@@ -1864,22 +1869,48 @@ class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.key, color: MyTheme.accent),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      translate('Set Password'),
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
+                  if (isMacOS) ...[
+                    const SizedBox(width: _kMacOSWindowControlsInset),
+                    Expanded(
+                      child: Center(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.key, color: MyTheme.accent),
+                              const SizedBox(width: 12),
+                              Text(
+                                translate('Set Password'),
+                                style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    splashRadius: 18,
-                    onPressed: _closeWindow,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
+                    const SizedBox(width: _kMacOSWindowControlsInset),
+                  ] else ...[
+                    const Icon(Icons.key, color: MyTheme.accent),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        translate('Set Password'),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      splashRadius: 18,
+                      onPressed: _closeWindow,
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ],
               ),
             ),
