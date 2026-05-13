@@ -16,9 +16,12 @@ src/version.rs
 *tgz
 cert.pfx
 *.bak
-*png
 *svg
 *jpg
+fastlane/**/*.png
+res/**/*.png
+libs/**/*.png
+flutter/**/*.png
 sciter.dll
 **pdb
 src/bridge_generated.rs
