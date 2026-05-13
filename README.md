@@ -45,7 +45,7 @@
 | 已输入设备 ID | 默认首页 |
 |:-------:|:-------:|
 | ![HDesk 默认首页](docs/hdesk-mobile-home.png) | ![HDesk 控制页面](docs/hdesk-mobile-control.png) |
-| 填入设备 ID 后可快速发起连接 | 查看最近设备并一键回连 |
+| 填入设备 ID 后可快速发起连接 | 焦点自动弹窗、缩放到最佳大小 |
 
 ## 快速开始
 
@@ -87,8 +87,8 @@
 | 平台 | 版本 | 下载 |
 |------|------|------|
 | **Windows** | 安装版、便携版 | [发布页](https://releases.hdesk.yunjichuangzhi.cn/) |
-| **macOS** | Universal (Intel/Apple Silicon) | 即将推出 |
-| **HarmonyOS** | 鸿蒙手机控制端 | 即将推出 |
+| **macOS** | Universal (Intel/Apple Silicon) | [发布页](https://releases.hdesk.yunjichuangzhi.cn/) |
+| **HarmonyOS** | 鸿蒙手机控制端 | [发布页](https://releases.hdesk.yunjichuangzhi.cn/) |
 
 > 💡 **提示**：所有版本在发布页直链分发，无需注册，无需翻墙
 
@@ -104,6 +104,7 @@
 | 功能 | **HDesk** | 远程桌面 | TeamViewer | AnyDesk |
 |:----:|:---:|:---:|:---:|:---:|
 | **鸿蒙手机控制** | ✅ | ❌ | ❌ | ❌ |
+| **自动缩放、获焦弹键盘** | ✅ | ❌ | ❌ | ❌ |
 | **ID 直连** | ✅ | ❌ | ✅ | ✅ |
 | **端到端加密** | ✅ | ✅ | ✅ | ✅ |
 | **文件传输** | ✅ | ✅ | ✅ | ✅ |
@@ -244,7 +245,7 @@ HDesk **仅供合法授权的远程访问与运维**使用。任何违法使用�
 |:---:|:------:|
 | **整体稳定性** | ✅ Production Ready |
 | **跨平台支持** | 🙌 Windows / macOS / HarmonyOS |
-| **开发活跃度** | 🐧 震震不窗 |
+| **开发活跃度** | 🐧 h-desk |
 | **最后更新** | **2026.05** |
 | **版本号** | 见 [Release Notes](https://releases.hdesk.yunjichuangzhi.cn/) |
 
