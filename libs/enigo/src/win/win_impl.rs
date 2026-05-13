@@ -126,13 +126,21 @@ impl MouseControllable for Enigo {
     }
 
     fn mouse_move_to(&mut self, x: i32, y: i32) {
+        let vx = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+        let vy = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+        let vw = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+        let vh = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
+        debug_assert!(vw > 0 && vh > 0, "Virtual screen has zero dimension");
+        // OS converts back via `pixel = abs * screen_size / 65536`, so we multiply
+        // by 65536 (not 65535) and offset by 32768 (half of 65536) to land in the
+        // center of each pixel's abs-range, eliminating the systematic -1,-1 offset.
+        let abs_x = ((x - vx) * 65536 + 32768) / vw;
+        let abs_y = ((y - vy) * 65536 + 32768) / vh;
         mouse_event(
             MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
             0,
-            (x - unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) }) * 65535
-                / unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) },
-            (y - unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) }) * 65535
-                / unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) },
+            abs_x,
+            abs_y,
         );
     }
 
@@ -474,5 +482,32 @@ impl Enigo {
             unsafe { GetWindowThreadProcessId(GetForegroundWindow(), std::ptr::null_mut()) };
         unsafe { LAYOUT = GetKeyboardLayout(current_window_thread_id) };
         unsafe { VkKeyScanExW(chr as _, LAYOUT) as _ }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Verify the coordinate conversion round-trips correctly for common resolutions.
+    /// OS reverse mapping: pixel = abs * screen_size / 65536
+    #[test]
+    fn coordinate_round_trip_common_resolutions() {
+        for w in [1920i32, 2560, 3840, 1080, 1200] {
+            for x in 0..w {
+                let abs = (x * 65536 + 32768) / w;
+                let back = abs * w / 65536;
+                assert_eq!(
+                    back, x,
+                    "w={w} x={x} abs={abs} back={back}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_overflow_for_8k_virtual_desktop() {
+        let vw: i32 = 15360; // dual 8K
+        let x: i32 = vw - 1;
+        let abs = (x * 65536 + 32768) / vw;
+        assert!(abs >= 0 && abs <= 65535);
     }
 }

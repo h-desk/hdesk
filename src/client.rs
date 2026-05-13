@@ -462,6 +462,7 @@ impl Client {
             token: token.to_owned(),
             nat_type: nat_type.into(),
             licence_key: key.to_owned(),
+            product_code: crate::common::PRODUCT_CODE.to_owned(),
             conn_type: conn_type.into(),
             version: crate::VERSION.to_owned(),
             udp_port: udp_nat_port as _,
@@ -1072,6 +1073,7 @@ impl Client {
                 uuid: uuid.clone(),
                 relay_server: relay_server.clone(),
                 secure,
+                product_code: crate::common::PRODUCT_CODE.to_owned(),
                 ..Default::default()
             });
             socket.send(&msg_out).await?;
@@ -1115,6 +1117,7 @@ impl Client {
             id: peer.to_owned(),
             uuid,
             conn_type: conn_type.into(),
+            product_code: crate::common::PRODUCT_CODE.to_owned(),
             ..Default::default()
         });
         conn.send(&msg_out).await?;

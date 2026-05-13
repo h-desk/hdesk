@@ -59,6 +59,7 @@ pub const PLATFORM_WINDOWS: &str = "Windows";
 pub const PLATFORM_LINUX: &str = "Linux";
 pub const PLATFORM_MACOS: &str = "Mac OS";
 pub const PLATFORM_ANDROID: &str = "Android";
+pub const PRODUCT_CODE: &str = "hdesk";
 
 pub const TIMER_OUT: Duration = Duration::from_secs(1);
 pub const DEFAULT_KEEP_ALIVE: i32 = 60_000;
@@ -977,9 +978,9 @@ pub const OFFICIAL_UPDATE_SERVER_LATEST_JSON_URL: &str =
 pub const OFFICIAL_GITHUB_REPO_URL: &str = "https://github.com/h-desk/hdesk";
 pub const OFFICIAL_GITHUB_RELEASES_URL: &str = "https://github.com/h-desk/hdesk/releases";
 #[cfg(target_os = "windows")]
-pub const OFFICIAL_WINDOWS_UPDATE_VERSION: &str = "1.4.6";
+pub const OFFICIAL_WINDOWS_UPDATE_VERSION: &str = "1.0.1";
 #[cfg(target_os = "windows")]
-pub const OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL: &str = "https://agc-storage-drcn.platform.dbankcloud.cn/v0/hdesk-erv9s/releases%2Fhdesk-1.4.6-x86_64.exe?token=7a3620e9-9dce-4b5c-8db3-6a0ecd94685f";
+pub const OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL: &str = "https://apps.yunjichuangzhi.cn/hdesk/releases/download/1.0.1/hdesk-1.0.1-x86_64.exe";
 
 #[inline]
 pub fn use_official_update_channel() -> bool {

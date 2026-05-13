@@ -37,6 +37,7 @@ PACKAGE_SERVICE_NAME = f'{PACKAGE_NAME}.service'
 PACKAGE_DESKTOP_ENTRY = f'{LEGACY_PACKAGE_NAME}.desktop'
 PACKAGE_LINK_DESKTOP_ENTRY = f'{LEGACY_PACKAGE_NAME}-link.desktop'
 MIN_HWCODEC_DLL_SIZE = 29 * 1024 * 1024
+MACOS_DMG_BASENAME = APP_BRAND_NAME
 
 
 def get_deb_arch() -> str:
@@ -162,6 +163,20 @@ def make_parser():
             '--screencapturekit',
             action='store_true',
             help='Enable feature screencapturekit'
+        )
+        parser.add_argument(
+            '--macos-manual-override',
+            action='store_true',
+            help='Build ad-hoc signed macOS manual-override app and DMG packages'
+        )
+        parser.add_argument(
+            '--macos-manual-arch',
+            dest='macos_manual_arches',
+            metavar='ARCH',
+            nargs='+',
+            choices=['x86_64', 'arm64'],
+            default=None,
+            help='Target macOS architectures for manual-override packaging. Default: x86_64 arm64.'
         )
     return parser
 
@@ -462,10 +477,28 @@ def build_flutter_dmg(version, features):
     system2('cp -rf ../target/release/service ./build/macos/Build/Products/Release/HDesk.app/Contents/MacOS/')
     '''
     system2(
-        "create-dmg --volname \"HDesk Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon HDesk.app 200 190 --hide-extension HDesk.app rustdesk.dmg ./build/macos/Build/Products/Release/HDesk.app")
-    os.rename("rustdesk.dmg", f"../rustdesk-{version}.dmg")
+        f"create-dmg --volname \"{APP_BRAND_NAME} Installer\" --window-pos 200 120 --window-size 800 400 --icon-size 100 --app-drop-link 600 185 --icon {APP_BRAND_NAME}.app 200 190 --hide-extension {APP_BRAND_NAME}.app {MACOS_DMG_BASENAME}.dmg ./build/macos/Build/Products/Release/{APP_BRAND_NAME}.app")
+    os.rename(f"{MACOS_DMG_BASENAME}.dmg", f"../{MACOS_DMG_BASENAME}-{version}.dmg")
     '''
     os.chdir("..")
+
+
+def build_flutter_manual_override_dmg(features, arches):
+    if skip_cargo:
+        sys.stderr.write('Error: --skip-cargo is not supported with --macos-manual-override.\n')
+        sys.exit(-1)
+
+    script_path = Path('res/osx-manual-override-pack.sh')
+    if not script_path.exists():
+        sys.stderr.write(f'Error: missing `{script_path}`.\n')
+        sys.exit(-1)
+
+    arch_value = ' '.join(arches) if arches else 'x86_64 arm64'
+    system2(
+        f'HDESK_MACOS_ARCHES="{arch_value}" '
+        f'HDESK_MACOS_RUST_FEATURES="{features}" '
+        f'bash {script_path}'
+    )
 
 
 def build_flutter_arch_manjaro(version, features):
@@ -611,7 +644,10 @@ def main():
     else:
         if flutter:
             if osx:
-                build_flutter_dmg(version, features)
+                if args.macos_manual_override:
+                    build_flutter_manual_override_dmg(features, args.macos_manual_arches)
+                else:
+                    build_flutter_dmg(version, features)
                 pass
             else:
                 # system2(
@@ -639,23 +675,23 @@ def main():
     codesign -s "Developer ID Application: {0}" --force --options runtime  ./target/release/bundle/osx/HDesk.app
     '''.format(pa))
                 system2(
-                    'create-dmg "RustDesk %s.dmg" "target/release/bundle/osx/HDesk.app"' % version)
-                os.rename('RustDesk %s.dmg' %
-                          version, 'rustdesk-%s.dmg' % version)
+                    f'create-dmg "{APP_BRAND_NAME} {version}.dmg" "target/release/bundle/osx/{APP_BRAND_NAME}.app"')
+                os.rename(f'{APP_BRAND_NAME} {version}.dmg',
+                          f'{MACOS_DMG_BASENAME}-{version}.dmg')
                 if pa:
                     system2('''
     # https://pyoxidizer.readthedocs.io/en/apple-codesign-0.14.0/apple_codesign.html
     # https://pyoxidizer.readthedocs.io/en/stable/tugger_code_signing.html
     # https://developer.apple.com/developer-id/
     # goto xcode and login with apple id, manager certificates (Developer ID Application and/or Developer ID Installer) online there (only download and double click (install) cer file can not export p12 because no private key)
-    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./rustdesk-{1}.dmg
-    codesign -s "Developer ID Application: {0}" --force --options runtime ./rustdesk-{1}.dmg
+    #rcodesign sign --p12-file ~/.p12/rustdesk-developer-id.p12 --p12-password-file ~/.p12/.cert-pass --code-signature-flags runtime ./{2}-{1}.dmg
+    codesign -s "Developer ID Application: {0}" --force --options runtime ./{2}-{1}.dmg
     # https://appstoreconnect.apple.com/access/api
     # https://gregoryszorc.com/docs/apple-codesign/stable/apple_codesign_getting_started.html#apple-codesign-app-store-connect-api-key
     # p8 file is generated when you generate api key (can download only once)
-    rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple rustdesk-{1}.dmg
+    rcodesign notary-submit --api-key-path ../.p12/api-key.json  --staple ./{2}-{1}.dmg
     # verify:  spctl -a -t exec -v /Applications/HDesk.app
-    '''.format(pa, version))
+    '''.format(pa, version, MACOS_DMG_BASENAME))
                 else:
                     print('Not signed')
             else:

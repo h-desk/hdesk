@@ -278,6 +278,29 @@ fn looks_like_bottom_input_band(
 
 fn cursor_surface_explicitly_noneditable(class_name: &str) -> bool {
     let class_name = class_name.to_lowercase();
+    let exact_noneditable = [
+        "aui-header",
+        "horizontaltabstripregionview",
+        "image",
+        "listviewitem",
+        "tab",
+    ];
+    if exact_noneditable.iter().any(|name| class_name == *name) {
+        return true;
+    }
+
+    let fragment_noneditable = [
+        "embedded-image",
+        "header-main",
+        "tasklistbuttonautomationpeer",
+    ];
+    if fragment_noneditable
+        .iter()
+        .any(|fragment| class_name.contains(fragment))
+    {
+        return true;
+    }
+
     // "no-user-select" means the surface blocks browser-native text selection.
     // However, VS Code's Monaco editor applies this class to the code editing
     // surface which DOES accept keyboard input via a hidden textarea.
@@ -393,6 +416,17 @@ fn finalize_editable_focus_hint(
 
     if hint.editable {
         if let Some(prev) = sticky.as_ref() {
+            if prev.fg_hwnd == hwnd_key && should_preserve_previous_split_pane(&prev.hint, &hint)
+            {
+                log::debug!(
+                    "editable_focus preserve prior split pane: incoming editor={:?}, pane={:?}, prev_editor={:?}, prev_pane={:?}",
+                    hint.editor,
+                    hint.pane,
+                    prev.hint.editor,
+                    prev.hint.pane
+                );
+                hint.pane = prev.hint.pane;
+            }
             if prev.fg_hwnd == hwnd_key
                 && should_keep_previous_virtual_cursor_hint(&prev.hint, &hint)
             {
@@ -715,6 +749,42 @@ fn compute_pane_rect(
     }
 
     (editor.0, window.1, pane_width, window.3)
+}
+
+fn rect_contains_rect_with_margin(
+    outer: (i32, i32, i32, i32),
+    inner: (i32, i32, i32, i32),
+    margin: i32,
+) -> bool {
+    if !rect_has_area(outer) || !rect_has_area(inner) {
+        return false;
+    }
+
+    let left = outer.0 - margin;
+    let top = outer.1 - margin;
+    let right = outer.0 + outer.2 + margin;
+    let bottom = outer.1 + outer.3 + margin;
+
+    inner.0 >= left
+        && inner.1 >= top
+        && inner.0 + inner.2 <= right
+        && inner.1 + inner.3 <= bottom
+}
+
+fn should_preserve_previous_split_pane(
+    prev: &EditableFocusHintInfo,
+    next: &EditableFocusHintInfo,
+) -> bool {
+    next.editable
+        && prev.display_idx == next.display_idx
+        && prev.window == next.window
+        && rect_has_area(prev.pane)
+        && rect_has_area(next.editor)
+        && prev.pane != prev.editor
+        && next.pane != prev.pane
+        && next.pane != next.editor
+        && next.pane == compute_pane_rect(next.editor, next.window)
+        && rect_contains_rect_with_margin(prev.pane, next.editor, 48)
 }
 
 const AWT_CODE_WORK_LEFT_MARGIN_PCT: i32 = 12;
@@ -6083,6 +6153,51 @@ pub(super) fn get_pids_with_first_arg_by_wmic<S1: AsRef<str>, S2: AsRef<str>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_preserve_previous_split_pane_for_editor_fallback() {
+        let prev = EditableFocusHintInfo {
+            editable: true,
+            editor: (852, 566, 200, 32),
+            window: (-9, -9, 1938, 1158),
+            pane: (282, 214, 776, 521),
+            display_idx: 0,
+            ..Default::default()
+        };
+        let next = EditableFocusHintInfo {
+            editable: true,
+            editor: (805, 610, 200, 32),
+            window: (-9, -9, 1938, 1158),
+            pane: (805, -9, 1124, 1158),
+            display_idx: 0,
+            ..Default::default()
+        };
+
+        assert!(should_preserve_previous_split_pane(&prev, &next));
+    }
+
+    #[test]
+    fn test_do_not_preserve_previous_split_pane_for_other_region() {
+        let prev = EditableFocusHintInfo {
+            editable: true,
+            editor: (852, 566, 200, 32),
+            window: (-9, -9, 1938, 1158),
+            pane: (282, 214, 776, 521),
+            display_idx: 0,
+            ..Default::default()
+        };
+        let next = EditableFocusHintInfo {
+            editable: true,
+            editor: (1120, 610, 200, 32),
+            window: (-9, -9, 1938, 1158),
+            pane: (1120, -9, 809, 1158),
+            display_idx: 0,
+            ..Default::default()
+        };
+
+        assert!(!should_preserve_previous_split_pane(&prev, &next));
+    }
+
     #[test]
     fn test_uninstall_cert() {
         println!("uninstall driver certs: {:?}", cert::uninstall_cert());

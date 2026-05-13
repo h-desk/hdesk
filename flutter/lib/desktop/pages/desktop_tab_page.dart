@@ -46,12 +46,13 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
     if (bind.isIncomingOnly()) {
       tabController.onSelected = (key) {
         if (key == kTabLabelHomePage) {
-          windowManager.setSize(getIncomingOnlyHomeSize());
-          setResizable(false);
+          if (!stateGlobal.desktopHomeBackdoorExpanded.isTrue) {
+            windowManager.setSize(getIncomingOnlyHomeSize());
+          }
         } else {
           windowManager.setSize(getIncomingOnlySettingsSize());
-          setResizable(true);
         }
+        setResizable(false);
       };
     }
   }
@@ -87,6 +88,8 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
             backgroundColor: Theme.of(context).colorScheme.background,
             body: DesktopTab(
               controller: tabController,
+              showTitle: true,
+              showMaximize: false,
               tail: Offstage(
                 offstage: bind.isIncomingOnly() || bind.isDisableSettings(),
                 child: ActionIcon(
@@ -97,14 +100,6 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
                 ),
               ),
             )));
-    return isMacOS || kUseCompatibleUiMode
-        ? tabWidget
-        : Obx(
-            () => DragToResizeArea(
-              resizeEdgeSize: stateGlobal.resizeEdgeSize.value,
-              enableResizeEdges: windowManagerEnableResizeEdges,
-              child: tabWidget,
-            ),
-          );
+    return tabWidget;
   }
 }

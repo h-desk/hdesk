@@ -114,7 +114,7 @@ SPEC CHECKSUMS:
   texture_rgba_renderer: cbed959a3c127122194a364e14b8577bd62dc8f2
   uni_links_desktop: 45900fb319df48fcdea2df0756e9c2626696b026
   url_launcher_macos: 175a54c831f4375a6cf895875f716ee5af3888ce
-  video_player_avfoundation: 7993f492ae0bd77edaea24d9dc051d8bb2cd7c86
+  video_player_avfoundation: e54d03b3b19f64f2c557354f72ce538387541ba6
   wakelock_plus: 4783562c9a43d209c458cb9b30692134af456269
   window_manager: 3a1844359a6295ab1e47659b1a777e36773cd6e8
   window_size: 339dafa0b27a95a62a843042038fa6c3c48de195

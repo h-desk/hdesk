@@ -66,7 +66,7 @@ class MainFlutterWindow: NSWindow {
             // TrayManagerPlugin.register(with: controller.registrar(forPlugin: "TrayManagerPlugin"))
             UniLinksDesktopPlugin.register(with: controller.registrar(forPlugin: "UniLinksDesktopPlugin"))
             UrlLauncherPlugin.register(with: controller.registrar(forPlugin: "UrlLauncherPlugin"))
-            FVPVideoPlayerPlugin.register(with: controller.registrar(forPlugin: "FVPVideoPlayerPlugin"))
+            VideoPlayerPlugin.register(with: controller.registrar(forPlugin: "VideoPlayerPlugin"))
             WakelockPlusMacosPlugin.register(with: controller.registrar(forPlugin: "WakelockPlusMacosPlugin"))
             WindowManagerPlugin.register(with: controller.registrar(forPlugin: "WindowManagerPlugin"))
             WindowSizePlugin.register(with: controller.registrar(forPlugin: "WindowSizePlugin"))

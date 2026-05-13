@@ -1,182 +1,261 @@
-<p align="center">
-  <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
-  <a href="#raw-steps-to-build">Build</a> •
-  <a href="#how-to-build-with-docker">Docker</a> •
-  <a href="#file-structure">Structure</a> •
-  <a href="#snapshot">Snapshot</a><br>
-  [<a href="docs/README-UA.md">Українська</a>] | [<a href="docs/README-CS.md">česky</a>] | [<a href="docs/README-ZH.md">中文</a>] | [<a href="docs/README-HU.md">Magyar</a>] | [<a href="docs/README-ES.md">Español</a>] | [<a href="docs/README-FA.md">فارسی</a>] | [<a href="docs/README-FR.md">Français</a>] | [<a href="docs/README-DE.md">Deutsch</a>] | [<a href="docs/README-PL.md">Polski</a>] | [<a href="docs/README-ID.md">Indonesian</a>] | [<a href="docs/README-FI.md">Suomi</a>] | [<a href="docs/README-ML.md">മലയാളം</a>] | [<a href="docs/README-JP.md">日本語</a>] | [<a href="docs/README-NL.md">Nederlands</a>] | [<a href="docs/README-IT.md">Italiano</a>] | [<a href="docs/README-RU.md">Русский</a>] | [<a href="docs/README-PTBR.md">Português (Brasil)</a>] | [<a href="docs/README-EO.md">Esperanto</a>] | [<a href="docs/README-KR.md">한국어</a>] | [<a href="docs/README-AR.md">العربي</a>] | [<a href="docs/README-VN.md">Tiếng Việt</a>] | [<a href="docs/README-DA.md">Dansk</a>] | [<a href="docs/README-GR.md">Ελληνικά</a>] | [<a href="docs/README-TR.md">Türkçe</a>] | [<a href="docs/README-NO.md">Norsk</a>] | [<a href="docs/README-RO.md">Română</a>]<br>
-  <b>We need your help to translate this README, <a href="https://github.com/rustdesk/rustdesk/tree/master/src/lang">RustDesk UI</a> and <a href="https://github.com/rustdesk/doc.rustdesk.com">RustDesk Doc</a> to your native language</b>
-</p>
+# HDesk — 远程桌面，极简重连
 
-> [!Caution]
-> **Misuse Disclaimer:** <br>
-> The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
+> 首款支持 **HarmonyOS 手机操控桌面**的远程工具  
+> 用鸿蒙手机操控 Windows/macOS，ID 直连，无需注册、无需配置
 
+<div align="center">
 
-Chat with us: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
+![HDesk 官网首页](docs/hdesk-official-hero.png)
 
-[![RustDesk Server Pro](https://img.shields.io/badge/RustDesk%20Server%20Pro-Advanced%20Features-blue)](https://rustdesk.com/pricing.html)
+[官网](https://apps.yunjichuangzhi.cn/hdesk/) • [下载](https://releases.hdesk.yunjichuangzhi.cn/) • [问题反馈](https://github.com/rustdesk/rustdesk/issues)
 
-Yet another remote desktop solution, written in Rust. Works out of the box with no configuration required. You have full control of your data, with no concerns about security. You can use our rendezvous/relay server, [set up your own](https://rustdesk.com/server), or [write your own rendezvous/relay server](https://github.com/rustdesk/rustdesk-server-demo).
+</div>
 
-![image](https://user-images.githubusercontent.com/71636191/171661982-430285f0-2e12-4b1d-9957-4a58e375304d.png)
+## ✨ 核心优势
 
-RustDesk welcomes contribution from everyone. See [CONTRIBUTING.md](docs/CONTRIBUTING.md) for help getting started.
+### 🔹 为鸿蒙而生
 
-[**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
+| 特性 | 说明 |
+|:----:|------|
+| **📱 鸿蒙手机控桌面** | 触摸直接映射为鼠标操作，手机可作为随身遥控器 |
+| **🔗 三端无缝互联** | Windows、macOS、HarmonyOS 共用账号与最近连接记录 |
+| **⚡ 移动弱网稳定** | 断线自动重连，切前后台状态完整保留 |
 
-[**BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
+### 🔹 核心特性
 
-[**NIGHTLY BUILD**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
+| 特性 | 说明 |
+|:---:|------|
+| **🆔 ID 直连** | 输入 9 位设备 ID，无需 IP、无需端口映射 |
+| **🔐 双密码模式** | 一次性密码 (自动刷新) + 固定密码 (长期授权) |
+| **🛡️ 端到端加密** | 所有连接全程加密，AES-256 级别保护 |
+| **⚙️ 开箱即用** | 安装即可用，无需复杂配置，自动启动服务 |
 
-[<img src="https://f-droid.org/badge/get-it-on.png"
-    alt="Get it on F-Droid"
-    height="80">](https://f-droid.org/en/packages/com.carriez.flutter_hbb)
-[<img src="https://flathub.org/api/badge?svg&locale=en"
-    alt="Get it on Flathub"
-    height="80">](https://flathub.org/apps/com.rustdesk.RustDesk)
+## 应用界面
 
-## Dependencies
+### 桌面端
 
-Desktop versions use Flutter or Sciter (deprecated) for GUI, this tutorial is for Sciter only, since it is easier and more friendly to start. Check out our [CI](https://github.com/rustdesk/rustdesk/blob/master/.github/workflows/flutter-build.yml) for building Flutter version.
+> 三种状态，一目了然
 
-Please download Sciter dynamic library yourself.
+![HDesk 完整界面](docs/hdesk-official-screenshots.png)
 
-[Windows](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.win/x64/sciter.dll) |
-[Linux](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so) |
-[macOS](https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.osx/libsciter.dylib)
+![HDesk 被控状态](docs/hdesk-official-control-card.png)
 
-## Raw Steps to build
+### 移动端（HarmonyOS）
 
-- Prepare your Rust development env and C++ build env
+| 已输入设备 ID | 默认首页 |
+|:-------:|:-------:|
+| ![HDesk 默认首页](docs/hdesk-mobile-home.png) | ![HDesk 控制页面](docs/hdesk-mobile-control.png) |
+| 填入设备 ID 后可快速发起连接 | 查看最近设备并一键回连 |
 
-- Install [vcpkg](https://github.com/microsoft/vcpkg), and set `VCPKG_ROOT` env variable correctly
+## 快速开始
 
-  - Windows: vcpkg install libvpx:x64-windows-static libyuv:x64-windows-static opus:x64-windows-static aom:x64-windows-static
-  - Linux/macOS: vcpkg install libvpx libyuv opus aom
+### 三步建立连接
 
-- run `cargo run`
-
-## [Build](https://rustdesk.com/docs/en/dev/build/)
-
-## How to Build on Linux
-
-### Ubuntu 18 (Debian 10)
-
-```sh
-sudo apt install -y zip g++ gcc git curl wget nasm yasm libgtk-3-dev clang libxcb-randr0-dev libxdo-dev \
-        libxfixes-dev libxcb-shape0-dev libxcb-xfixes0-dev libasound2-dev libpulse-dev cmake make \
-        libclang-dev ninja-build libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libpam0g-dev
+```
+1️⃣ 在被控端启动 HDesk
+   ↓
+   显示 9 位设备 ID + 一次性密码
+   
+2️⃣ 在控制端手机输入设备 ID + 密码
+   ↓
+   建立加密连接
+   
+3️⃣ 连接成功，开始远程操作
+   ↓
+   桌面完全控制，支持拖拽文件
 ```
 
-### openSUSE Tumbleweed
+### 系统要求
 
-```sh
-sudo zypper install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libXfixes-devel cmake alsa-lib-devel gstreamer-devel gstreamer-plugins-base-devel xdotool-devel pam-devel
+| 平台 | 最低要求 | 建议配置 |
+|------|---------|---------|
+| **Windows** | 10/11 (x64) | 处理器: i5+ / 内存: 4GB+ |
+| **macOS** | 10.13+ (Intel/Apple Silicon) | 处理器: M1+ / 内存: 4GB+ |
+| **HarmonyOS** | 3.0+ (手机) | 骁龙 870+ / 内存: 4GB+ |
+
+### 使用场景
+
+- 📱 **办公外出**：鸿蒙手机临时处理电脑文件、查看邮件
+- 👨‍👩‍👧‍👦 **远程协助**：帮助家人/同事完成操作，实时语音沟通
+- 🔄 **跨设备办公**：多设备切换，会话无缝接续
+- 🎮 **内容消费**：将电脑画面投到手机，灵活浏览
+
+## 下载与安装
+
+### 官方发布
+
+| 平台 | 版本 | 下载 |
+|------|------|------|
+| **Windows** | 安装版、便携版 | [发布页](https://releases.hdesk.yunjichuangzhi.cn/) |
+| **macOS** | Universal (Intel/Apple Silicon) | 即将推出 |
+| **HarmonyOS** | 鸿蒙手机控制端 | 即将推出 |
+
+> 💡 **提示**：所有版本在发布页直链分发，无需注册，无需翻墙
+
+### 安装步骤
+
+1. 访问 [发布页](https://releases.hdesk.yunjichuangzhi.cn/) 下载最新版本
+2. Windows 用户：双击安装或解压便携版
+3. 启动后自动监听本地服务，显示设备 ID
+4. 手机端输入 ID 发起连接即可
+
+## 📊 功能对比
+
+| 功能 | **HDesk** | 远程桌面 | TeamViewer | AnyDesk |
+|:----:|:---:|:---:|:---:|:---:|
+| **鸿蒙手机控制** | ✅ | ❌ | ❌ | ❌ |
+| **ID 直连** | ✅ | ❌ | ✅ | ✅ |
+| **端到端加密** | ✅ | ✅ | ✅ | ✅ |
+| **文件传输** | ✅ | ✅ | ✅ | ✅ |
+| **断线自动重连** | ✅ | ⚠️ | ✅ | ✅ |
+| **开箱即用** | ✅ | ❌ | ⚠️ | ⚠️ |
+| **完全离线可用** | ✅ | ✅ | ❌ | ❌ |
+| **开源免费** | ✅ | ✅ | ❌ | ❌ |
+
+## 🚀 开发与贡献
+
+HDesk 基于 [RustDesk](https://github.com/rustdesk/rustdesk) 开源架构演进，采用 **Rust 后端 + Flutter 前端** 的跨平台方案。
+
+### 📄 项目结构
+
+```
+rustdesk/
+├─ src/              → Rust 核心（网络、编码、遥控）
+├─ flutter/          → Flutter UI（桌面 & 移动）
+├─ libs/             → 共享库（屏幕、输入、剪贴板）
+├─ docs/             → 文档与构建脚本
+├─ res/              → 资源文件
+└─ AGENTS.md         → 开发指南
 ```
 
-### Fedora 28 (CentOS 8)
+### 🚀 快速开始开发
 
-```sh
-sudo yum -y install gcc-c++ git curl wget nasm yasm gcc gtk3-devel clang libxcb-devel libxdo-devel libXfixes-devel pulseaudio-libs-devel cmake alsa-lib-devel gstreamer1-devel gstreamer1-plugins-base-devel pam-devel
+```bash
+# 1. 克隆仓库
+$ git clone --depth 1 https://github.com/rustdesk/rustdesk.git
+$ cd rustdesk
+
+# 2. 查看开发文档
+$ cat AGENTS.md                  # 开发指南
+$ cat docs/CONTRIBUTING.md       # 贡献流程
+
+# 3. 整理依赖下载
+$ vcpkg integrate install        # Windows 必须
+$ cargo build --release          # 编译应用
+
+# 4. 或培训 Flutter 前端
+$ flutter pub get
+$ flutter run -d windows         # macOS/Linux 上占比提低
 ```
 
-### Arch (Manjaro)
+✨ **帮助**: 每个 PR 会介入 ✅ GitHub Actions CI/CD 自动测试。
 
-```sh
-sudo pacman -Syu --needed unzip git cmake gcc curl wget yasm nasm zip make pkg-config clang gtk3 xdotool libxcb libxfixes alsa-lib pipewire
-```
+### 🌟 贡献类型
 
-### Install vcpkg
+| 类型 | 描述 | 贡献人 | 
+|:---:|--------|:----:|
+| **👨‍💻 代码** | 功能、修认、优化 | [PR](https://github.com/rustdesk/rustdesk/pulls) |
+| **✍️ 编写** | 文档与翻译 | [Wiki](https://github.com/rustdesk/rustdesk/wiki) |
+| **🐛 报告** | Bug 反馈与测试 | [Issues](https://github.com/rustdesk/rustdesk/issues) |
+| **📋💡** | 功能建议 | [Discussions](https://github.com/rustdesk/rustdesk/discussions) |
 
-```sh
-git clone https://github.com/microsoft/vcpkg
-cd vcpkg
-git checkout 2023.04.15
-cd ..
-vcpkg/bootstrap-vcpkg.sh
-export VCPKG_ROOT=$HOME/vcpkg
-vcpkg/vcpkg install libvpx libyuv opus aom
-```
+🙏 我们永远欢迎不同背景的贡献者！
 
-### Fix libvpx (For Fedora)
+---
 
-```sh
-cd vcpkg/buildtrees/libvpx/src
-cd *
-./configure
-sed -i 's/CFLAGS+=-I/CFLAGS+=-fPIC -I/g' Makefile
-sed -i 's/CXXFLAGS+=-I/CXXFLAGS+=-fPIC -I/g' Makefile
-make
-cp libvpx.a $HOME/vcpkg/installed/x64-linux/lib/
-cd
-```
+## 📢 反馈与支持
 
-### Build
+### 👥 社区与赞助
 
-```sh
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-git clone --recurse-submodules https://github.com/rustdesk/rustdesk
-cd rustdesk
-mkdir -p target/debug
-wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so
-mv libsciter-gtk.so target/debug
-VCPKG_ROOT=$HOME/vcpkg cargo run
-```
+- **🌟 [GitHub Stars](https://github.com/rustdesk/rustdesk)** - 财空我们
+- **🤝 [GitHub Sponsors](https://github.com/sponsors/rustdesk)** - 针对收益预算
+- **🎫 [Patreon](https://www.patreon.com/rustdesk)** - 丕须非体成员
+- **💳 [Open Collective](https://opencollective.com/rustdesk)** - 透明费用责
 
-## How to build with Docker
+### 💬 社区氛围
 
-Begin by cloning the repository and building the Docker container:
+- **💬 [GitHub Discussions](https://github.com/rustdesk/rustdesk/discussions)** - 社团络空室
+- **🤖 [Reddit r/rustdesk](https://www.reddit.com/r/rustdesk)** - 旧版流汗
+- **📧 [Discord](https://discord.gg/nDceKgxnkV)** - 实时聊天（活跃！）
+- **👤 [X (Twitter)](https://twitter.com/rustdesk)** - 新闻流动
 
-```sh
-git clone https://github.com/rustdesk/rustdesk
-cd rustdesk
-git submodule update --init --recursive
-docker build -t "rustdesk-builder" .
-```
+### 🏢 商业支持
 
-Then, each time you need to build the application, run the following command:
+- 👨‍💼 **企业授权** - 专用服务器、专业支持
+- 🚀 **应事室茂住** - 地网部署、不失联网
+- 💰 **吐槽反馈按月优化** - 根据但旧变变提需
 
-```sh
-docker run --rm -it -v $PWD:/home/user/rustdesk -v rustdesk-git-cache:/home/user/.cargo/git -v rustdesk-registry-cache:/home/user/.cargo/registry -e PUID="$(id -u)" -e PGID="$(id -g)" rustdesk-builder
-```
+📈 详见 [RustDesk Server Pro](https://rustdesk.com/pricing.html)
 
-Note that the first build may take longer before dependencies are cached, subsequent builds will be faster. Additionally, if you need to specify different arguments to the build command, you may do so at the end of the command in the `<OPTIONAL-ARGS>` position. For instance, if you wanted to build an optimized release version, you would run the command above followed by `--release`. The resulting executable will be available in the target folder on your system, and can be run with:
+## 🔒 安全与隐私
 
-```sh
-target/debug/rustdesk
-```
+### 加密传输
 
-Or, if you're running a release executable:
+- **连接握手**：采用 ECDH 密钥交换，防止中间人攻击
+- **数据传输**：所有流量使用 AES-256-GCM 加密
+- **认证机制**：设备 ID + 动态密码双重验证
 
-```sh
-target/release/rustdesk
-```
+### 隐私保护
 
-Please ensure that you run these commands from the root of the RustDesk repository, or the application may not find the required resources. Also note that other cargo subcommands such as `install` or `run` are not currently supported via this method as they would install or run the program inside the container instead of the host.
+- ✅ 所有数据本地存储，不上云
+- ✅ 连接记录仅保存设备端
+- ✅ 无需账号注册，完全匿名
+- ✅ 支持部署自有服务器
 
-## File Structure
+### 安全建议
 
-- **[libs/hbb_common](https://github.com/rustdesk/rustdesk/tree/master/libs/hbb_common)**: video codec, config, tcp/udp wrapper, protobuf, fs functions for file transfer, and some other utility functions
-- **[libs/scrap](https://github.com/rustdesk/rustdesk/tree/master/libs/scrap)**: screen capture
-- **[libs/enigo](https://github.com/rustdesk/rustdesk/tree/master/libs/enigo)**: platform specific keyboard/mouse control
-- **[libs/clipboard](https://github.com/rustdesk/rustdesk/tree/master/libs/clipboard)**: file copy and paste implementation for Windows, Linux, macOS.
-- **[src/ui](https://github.com/rustdesk/rustdesk/tree/master/src/ui)**: obsolete Sciter UI (deprecated)
-- **[src/server](https://github.com/rustdesk/rustdesk/tree/master/src/server)**: audio/clipboard/input/video services, and network connections
-- **[src/client.rs](https://github.com/rustdesk/rustdesk/tree/master/src/client.rs)**: start a peer connection
-- **[src/rendezvous_mediator.rs](https://github.com/rustdesk/rustdesk/tree/master/src/rendezvous_mediator.rs)**: Communicate with [rustdesk-server](https://github.com/rustdesk/rustdesk-server), wait for remote direct (TCP hole punching) or relayed connection
-- **[src/platform](https://github.com/rustdesk/rustdesk/tree/master/src/platform)**: platform specific code
-- **[flutter](https://github.com/rustdesk/rustdesk/tree/master/flutter)**: Flutter code for desktop and mobile
-- **[flutter/web/js](https://github.com/rustdesk/rustdesk/tree/master/flutter/web/v1/js)**: JavaScript for Flutter web client
+1. 定期更新到最新版本
+2. 使用复杂的固定密码进行长期授权
+3. 不在公共网络上启动被控服务
+4. 及时断开不需要的连接
 
-## Screenshots
+---
 
-![Connection Manager](https://github.com/rustdesk/rustdesk/assets/28412477/db82d4e7-c4bc-4823-8e6f-6af7eadf7651)
+## 📜 许可协议
 
-![Connected to a Windows PC](https://github.com/rustdesk/rustdesk/assets/28412477/9baa91e9-3362-4d06-aa1a-7518edcbd7ea)
+本项目遵循 [GNU Affero General Public License v3.0](LICENSE)。
 
-![File Transfer](https://github.com/rustdesk/rustdesk/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
+### ⚠️ 使用责任声明
 
-![TCP Tunneling](https://github.com/rustdesk/rustdesk/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
+HDesk **仅供合法授权的远程访问与运维**使用。任何违法使用者需自担全部法律责任：
 
+❌ 禁止未经授权的设备控制  
+❌ 禁止隐私数据采集与泄露  
+❌ 禁止恶意软件分发  
+❌ 禁止违反法律法规的活动  
+
+开发者不为任何滥用行为负责。
+
+## 🌟 感谢
+
+> HDesk 致力于为全球 HarmonyOS 用户提供最便捷的远程协作工具。
+
+**感谢**一下写得横竖的一些人、组织与社区：
+
+- 🤖 [The Rust Foundation](https://foundation.rust-lang.org/) - 语言基准与优化
+- 👤 [Flutter Team](https://flutter.dev/) - UI 框架与特特
+- 👥 [RustDesk 社区](https://github.com/rustdesk/) - 一纳几林晓
+
+---
+
+## 📋 状态与最近更新
+
+| 指标 | 状态 |
+|:---:|:------:|
+| **整体稳定性** | ✅ Production Ready |
+| **跨平台支持** | 🙌 Windows / macOS / HarmonyOS |
+| **开发活跃度** | 🐧 震震不窗 |
+| **最后更新** | **2026.05** |
+| **版本号** | 见 [Release Notes](https://releases.hdesk.yunjichuangzhi.cn/) |
+
+---
+
+<div align="center">
+
+🌍 你的反馈有助于我们做得更好 🙏
+
+[提交 Issue](https://github.com/rustdesk/rustdesk/issues) • [上报一个想法](https://github.com/rustdesk/rustdesk/discussions) • [功欣我们的 Star](https://github.com/rustdesk/rustdesk)
+
+**春报春报，霜报霜报，翬感所有一直以来的支持者。**
+
+</div>

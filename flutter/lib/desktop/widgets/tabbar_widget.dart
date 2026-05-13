@@ -602,108 +602,147 @@ class _DesktopTabState extends State<DesktopTab>
             controller.tabType == DesktopTabType.install);
   }
 
+  bool get _showCenteredTitleBrandOnMacOS =>
+      isMacOS &&
+      (showLogo || showTitle) &&
+      state.value.tabs.length == 1 &&
+      (controller.tabType == DesktopTabType.main ||
+          controller.tabType == DesktopTabType.install);
+
+  Widget _buildTitleBrand() {
+    return InkWell(
+      hoverColor: Colors.transparent,
+      splashColor: Colors.transparent,
+      highlightColor: Colors.transparent,
+      focusColor: Colors.transparent,
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => stateGlobal.emitDesktopHomeTitleLogoTap(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Offstage(
+            offstage: !showLogo,
+            child: loadIcon(16),
+          ),
+          Offstage(
+            offstage: !showTitle,
+            child: Text(
+              'HDesk',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ).marginOnly(left: showLogo ? 6 : 0),
+          )
+        ],
+      ).paddingSymmetric(horizontal: 4, vertical: 2),
+    );
+  }
+
   Widget _buildBar() {
-    return Row(
+    return Stack(
       children: [
-        Expanded(
-            child: GestureDetector(
-                // custom double tap handler
-                onTap: !(bind.isIncomingOnly() && isInHomePage()) &&
-                        showMaximize
-                    ? () {
-                        final current = DateTime.now().millisecondsSinceEpoch;
-                        final elapsed = current - _lastClickTime;
-                        _lastClickTime = current;
-                        if (elapsed < bind.getDoubleClickTime()) {
-                          // onDoubleTap
-                          toggleMaximize(isMainWindow)
-                              .then((value) => stateGlobal.setMaximized(value));
-                        }
+        Row(
+          children: [
+            Expanded(
+                child: GestureDetector(
+                    // custom double tap handler
+                    onTap: !(bind.isIncomingOnly() && isInHomePage()) &&
+                            showMaximize
+                        ? () {
+                            final current = DateTime.now().millisecondsSinceEpoch;
+                            final elapsed = current - _lastClickTime;
+                            _lastClickTime = current;
+                            if (elapsed < bind.getDoubleClickTime()) {
+                              // onDoubleTap
+                              toggleMaximize(isMainWindow).then(
+                                  (value) => stateGlobal.setMaximized(value));
+                            }
+                          }
+                        : null,
+                    onPanStart: (_) => startDragging(isMainWindow),
+                    onPanCancel: () {
+                      // We want to disable dragging of the tab area in the tab bar.
+                      // Disable dragging is needed because macOS handles dragging by default.
+                      if (isMacOS) {
+                        setMovable(isMainWindow, false);
                       }
-                    : null,
-                onPanStart: (_) => startDragging(isMainWindow),
-                onPanCancel: () {
-                  // We want to disable dragging of the tab area in the tab bar.
-                  // Disable dragging is needed because macOS handles dragging by default.
-                  if (isMacOS) {
-                    setMovable(isMainWindow, false);
-                  }
-                },
-                onPanEnd: (_) {
-                  if (isMacOS) {
-                    setMovable(isMainWindow, false);
-                  }
-                },
-                child: Row(
-                  children: [
-                    Offstage(
-                        offstage: !isMacOS,
-                        child: const SizedBox(
-                          width: 78,
-                        )),
-                    Offstage(
-                      offstage: kUseCompatibleUiMode || isMacOS,
-                      child: Row(children: [
+                    },
+                    onPanEnd: (_) {
+                      if (isMacOS) {
+                        setMovable(isMainWindow, false);
+                      }
+                    },
+                    child: Row(
+                      children: [
                         Offstage(
-                          offstage: !showLogo,
-                          child: loadIcon(16),
+                            offstage: !isMacOS,
+                            child: const SizedBox(
+                              width: 78,
+                            )),
+                        Offstage(
+                          offstage: kUseCompatibleUiMode || isMacOS,
+                          child: Row(children: [
+                            Offstage(
+                              offstage: !showLogo && !showTitle,
+                              child: _buildTitleBrand(),
+                            ),
+                            const SizedBox(width: 8),
+                          ]).marginOnly(
+                            left: 5,
+                            right: 10,
+                          ),
                         ),
-                        Offstage(
-                            offstage: !showTitle,
-                            child: const Text(
-                              "RustDesk",
-                              style: TextStyle(fontSize: 13),
-                            ).marginOnly(left: 2))
-                      ]).marginOnly(
-                        left: 5,
-                        right: 10,
-                      ),
-                    ),
-                    Expanded(
-                        child: Listener(
-                            // handle mouse wheel
-                            onPointerSignal: (e) {
-                              if (e is PointerScrollEvent) {
-                                final sc =
-                                    controller.state.value.scrollController;
-                                if (!sc.canScroll) return;
-                                _scrollDebounce.call(() {
-                                  double adjust = 2.5;
-                                  sc.animateTo(
-                                      sc.offset + e.scrollDelta.dy * adjust,
-                                      duration: Duration(milliseconds: 200),
-                                      curve: Curves.ease);
-                                });
-                              }
-                            },
-                            child: _ListView(
-                              controller: controller,
-                              invisibleTabKeys: invisibleTabKeys,
-                              tabBuilder: tabBuilder,
-                              tabMenuBuilder: tabMenuBuilder,
-                              labelGetter: labelGetter,
-                              maxLabelWidth: maxLabelWidth,
-                              selectedTabBackgroundColor:
-                                  selectedTabBackgroundColor,
-                              unSelectedTabBackgroundColor:
-                                  unSelectedTabBackgroundColor,
-                              selectedBorderColor: selectedBorderColor,
-                            ))),
-                  ],
-                ))),
-        // hide simulated action buttons when we in compatible ui mode, because of reusing system title bar.
-        WindowActionPanel(
-          isMainWindow: isMainWindow,
-          state: state,
-          tabController: controller,
-          invisibleTabKeys: invisibleTabKeys,
-          tail: tail,
-          showMinimize: showMinimize,
-          showMaximize: showMaximize,
-          showClose: showClose,
-          onClose: onWindowCloseButton,
-          labelGetter: labelGetter,
-        ).paddingOnly(left: 10)
+                        Expanded(
+                            child: Listener(
+                                // handle mouse wheel
+                                onPointerSignal: (e) {
+                                  if (e is PointerScrollEvent) {
+                                    final sc =
+                                        controller.state.value.scrollController;
+                                    if (!sc.canScroll) return;
+                                    _scrollDebounce.call(() {
+                                      double adjust = 2.5;
+                                      sc.animateTo(
+                                          sc.offset + e.scrollDelta.dy * adjust,
+                                          duration: Duration(milliseconds: 200),
+                                          curve: Curves.ease);
+                                    });
+                                  }
+                                },
+                                child: _ListView(
+                                  controller: controller,
+                                  invisibleTabKeys: invisibleTabKeys,
+                                  tabBuilder: tabBuilder,
+                                  tabMenuBuilder: tabMenuBuilder,
+                                  labelGetter: labelGetter,
+                                  maxLabelWidth: maxLabelWidth,
+                                  selectedTabBackgroundColor:
+                                      selectedTabBackgroundColor,
+                                  unSelectedTabBackgroundColor:
+                                      unSelectedTabBackgroundColor,
+                                  selectedBorderColor: selectedBorderColor,
+                                ))),
+                      ],
+                    ))),
+            // hide simulated action buttons when we in compatible ui mode, because of reusing system title bar.
+            WindowActionPanel(
+              isMainWindow: isMainWindow,
+              state: state,
+              tabController: controller,
+              invisibleTabKeys: invisibleTabKeys,
+              tail: tail,
+              showMinimize: showMinimize,
+              showMaximize: showMaximize,
+              showClose: showClose,
+              onClose: onWindowCloseButton,
+              labelGetter: labelGetter,
+            ).paddingOnly(left: 10)
+          ],
+        ),
+        if (_showCenteredTitleBrandOnMacOS)
+          Positioned.fill(
+            child: Center(
+              child: _buildTitleBrand(),
+            ),
+          ),
       ],
     );
   }
@@ -1438,7 +1477,7 @@ class _TabDropDownButtonState extends State<_TabDropDownButton> {
 }
 
 bool _showTabBarBottomDivider(DesktopTabType tabType) {
-  return tabType == DesktopTabType.main || tabType == DesktopTabType.install;
+  return false;
 }
 
 class TabbarTheme extends ThemeExtension<TabbarTheme> {
