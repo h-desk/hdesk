@@ -7,7 +7,7 @@
 
 ![HDesk 官网首页](docs/hdesk-official-hero.png)
 
-[官网](https://apps.yunjichuangzhi.cn/hdesk/) • [下载](https://releases.hdesk.yunjichuangzhi.cn/) • [问题反馈](https://github.com/rustdesk/rustdesk/issues)
+[官网](https://apps.yunjichuangzhi.cn/hdesk/) • [下载](https://releases.hdesk.yunjichuangzhi.cn/) • [问题反馈](https://github.com/h-desk/hdesk/issues)
 
 </div>
 
@@ -120,7 +120,7 @@ HDesk 基于 [RustDesk](https://github.com/rustdesk/rustdesk) 开源架构演进
 ### 📄 项目结构
 
 ```
-rustdesk/
+hdesk/
 ├─ src/              → Rust 核心（网络、编码、遥控）
 ├─ flutter/          → Flutter UI（桌面 & 移动）
 ├─ libs/             → 共享库（屏幕、输入、剪贴板）
@@ -133,8 +133,8 @@ rustdesk/
 
 ```bash
 # 1. 克隆仓库
-$ git clone --depth 1 https://github.com/rustdesk/rustdesk.git
-$ cd rustdesk
+$ git clone --depth 1 https://github.com/h-desk/hdesk.git
+$ cd hdesk
 
 # 2. 查看开发文档
 $ cat AGENTS.md                  # 开发指南
@@ -155,10 +155,10 @@ $ flutter run -d windows         # macOS/Linux 上占比提低
 
 | 类型 | 描述 | 贡献人 | 
 |:---:|--------|:----:|
-| **👨‍💻 代码** | 功能、修认、优化 | [PR](https://github.com/rustdesk/rustdesk/pulls) |
-| **✍️ 编写** | 文档与翻译 | [Wiki](https://github.com/rustdesk/rustdesk/wiki) |
-| **🐛 报告** | Bug 反馈与测试 | [Issues](https://github.com/rustdesk/rustdesk/issues) |
-| **📋💡** | 功能建议 | [Discussions](https://github.com/rustdesk/rustdesk/discussions) |
+| **👨‍💻 代码** | 功能、修认、优化 | [PR](https://github.com/h-desk/hdesk/pulls) |
+| **✍️ 编写** | 文档与翻译 | [Wiki](https://github.com/h-desk/hdesk/wiki) |
+| **🐛 报告** | Bug 反馈与测试 | [Issues](https://github.com/h-desk/hdesk/issues) |
+| **📋💡** | 功能建议 | [Discussions](https://github.com/h-desk/hdesk/issues) |
 
 🙏 我们永远欢迎不同背景的贡献者！
 
@@ -168,25 +168,17 @@ $ flutter run -d windows         # macOS/Linux 上占比提低
 
 ### 👥 社区与赞助
 
-- **🌟 [GitHub Stars](https://github.com/rustdesk/rustdesk)** - 财空我们
-- **🤝 [GitHub Sponsors](https://github.com/sponsors/rustdesk)** - 针对收益预算
-- **🎫 [Patreon](https://www.patreon.com/rustdesk)** - 丕须非体成员
-- **💳 [Open Collective](https://opencollective.com/rustdesk)** - 透明费用责
+- **🌟 [GitHub Stars](https://github.com/h-desk/hdesk)** - Star我们
+- **🤝 [GitHub Sponsors](https://github.com/sponsors/hdesk)** - 针对收益预算
+<!-- - **🎫 [Patreon](https://www.patreon.com/hdesk)** - 丕须非体成员 -->
+<!-- - **💳 [Open Collective](https://opencollective.com/hdesk)** - 透明费用责 -->
 
 ### 💬 社区氛围
 
-- **💬 [GitHub Discussions](https://github.com/rustdesk/rustdesk/discussions)** - 社团络空室
-- **🤖 [Reddit r/rustdesk](https://www.reddit.com/r/rustdesk)** - 旧版流汗
-- **📧 [Discord](https://discord.gg/nDceKgxnkV)** - 实时聊天（活跃！）
-- **👤 [X (Twitter)](https://twitter.com/rustdesk)** - 新闻流动
-
-### 🏢 商业支持
-
-- 👨‍💼 **企业授权** - 专用服务器、专业支持
-- 🚀 **应事室茂住** - 地网部署、不失联网
-- 💰 **吐槽反馈按月优化** - 根据但旧变变提需
-
-📈 详见 [RustDesk Server Pro](https://rustdesk.com/pricing.html)
+- **💬 [GitHub Discussions](https://github.com/h-desk/hdesk/issues)** - 社团络空室
+<!-- - **🤖 [Reddit r/hdesk](https://www.reddit.com/r/hdesk)** - 旧版流汗 -->
+<!-- - **📧 [Discord](https://discord.gg/nDceKgxnkV)** - 实时聊天（活跃！） -->
+<!-- - **👤 [X (Twitter)](https://twitter.com/hdesk)** - 新闻流 -->
 
 ## 🔒 安全与隐私
 
@@ -255,7 +247,7 @@ HDesk **仅供合法授权的远程访问与运维**使用。任何违法使用�
 
 🌍 你的反馈有助于我们做得更好 🙏
 
-[提交 Issue](https://github.com/rustdesk/rustdesk/issues) • [上报一个想法](https://github.com/rustdesk/rustdesk/discussions) • [功欣我们的 Star](https://github.com/rustdesk/rustdesk)
+[提交 Issue](https://github.com/h-desk/hdesk/issues) • [上报一个想法](https://github.com/h-desk/hdesk/issues) • [贡献我们的 Star](https://github.com/h-desk/hdesk)
 
 **春报春报，霜报霜报，翬感所有一直以来的支持者。**
 
