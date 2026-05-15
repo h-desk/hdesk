@@ -1318,7 +1318,23 @@ fn run_editable_focus(sp: EmptyExtraFieldService, state: &mut StateEditableFocus
                         editable_windows_match(candidate_hint.window, anchor_window);
                     let (proxy_band, hit_editor, hit_band) =
                         proxy_hit_test(&candidate_hint, cursor_x, cursor_y);
-                    if candidate_window_match && hit_editor {
+                    // Use a tight tolerance for cursor-hover proxy reuse (8 px instead of
+                    // the standard 24 px used for click intents). The standard tolerance
+                    // lets the cursor be 12 px below the editor bottom and still trigger
+                    // editable=true, which makes HarmonyOS enter IME mode even when the
+                    // user is heading toward the taskbar. 8 px is enough to keep IME open
+                    // while the cursor is at the very edge of the input field, but will
+                    // correctly fire a proxy-miss once the cursor drifts more than ~8 px
+                    // outside the editor rect.
+                    const CURSOR_HOVER_PROXY_HIT_TOL: i32 = 8;
+                    let hit_editor_hover = rect_contains_point_with_margin(
+                        candidate_hint.editor,
+                        cursor_x,
+                        cursor_y,
+                        CURSOR_HOVER_PROXY_HIT_TOL,
+                        CURSOR_HOVER_PROXY_HIT_TOL,
+                    );
+                    if candidate_window_match && hit_editor_hover {
                         log::debug!(
                             "editable_focus cursor proxy reuse: source={} age_ms={} point=({}, {}) current_window={:?} anchor_window={:?} last_window={:?} editor={:?} pane={:?} proxy_band={:?}",
                             candidate_source,

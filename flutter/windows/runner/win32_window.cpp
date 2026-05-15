@@ -282,10 +282,24 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
+      if (wparam != WA_INACTIVE && ::IsIconic(window_handle_)) {
+        ::ShowWindow(window_handle_, SW_RESTORE);
+      }
       if (child_content_ != nullptr) {
         SetFocus(child_content_);
       }
       return 0;
+
+    case WM_SYSCOMMAND:
+      if ((wparam & 0xFFF0) == SC_RESTORE) {
+        ::ShowWindow(window_handle_, SW_RESTORE);
+        return 0;
+      }
+      if ((wparam & 0xFFF0) == SC_MAXIMIZE) {
+        ::ShowWindow(window_handle_, SW_MAXIMIZE);
+        return 0;
+      }
+      break;
   }
 
   return DefWindowProc(window_handle_, message, wparam, lparam);

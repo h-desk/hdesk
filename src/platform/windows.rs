@@ -376,6 +376,21 @@ fn try_reuse_sticky_hint_on_hard_negative(fg_hwnd: HWND) -> Option<EditableFocus
         return None;
     }
 
+    // If the cursor is over a different window (taskbar, another app), do not
+    // reuse the sticky editable hint. The foreground app keeps keyboard focus
+    // even when the cursor moves to the taskbar, but we must not treat that as
+    // an editable-area hover — doing so would cause HarmonyOS to send a first
+    // tap on the taskbar as a text-input event instead of a mouse click.
+    unsafe {
+        let cursor_wnd = winapi::um::winuser::WindowFromPoint(cursor_pt);
+        let on_host = cursor_wnd.is_null()
+            || cursor_wnd == fg_hwnd
+            || winapi::um::winuser::IsChild(fg_hwnd, cursor_wnd) != 0;
+        if !on_host {
+            return None;
+        }
+    }
+
     let mut sticky = EDITABLE_FOCUS_STICKY.lock().unwrap();
     let prev = sticky.as_ref()?.clone();
     if prev.fg_hwnd != hwnd_key || prev.transient_expires_at <= now {
@@ -1619,6 +1634,28 @@ unsafe fn probe_via_uia(
                     return Ok((true, final_result.1, Some(rect), pane_override));
                 }
                 if rect_is_proxy || !point_near_rect(rect, cx, cy, 96) {
+                    // Guard: cursor is physically over a different window (taskbar,
+                    // another app on a different monitor, etc.).
+                    // Chrome keeps keyboard focus even when the cursor moves to the
+                    // Windows taskbar or another app. WindowFromPoint is the
+                    // authoritative source for which window is visually under the
+                    // cursor, so if it is not the host window or a descendant, do NOT
+                    // synthesize editable=true. This prevents HarmonyOS from treating
+                    // a first tap on a taskbar icon as a text-input event.
+                    {
+                        let pt_check = winapi::shared::windef::POINT { x: cx, y: cy };
+                        let cursor_wnd = winapi::um::winuser::WindowFromPoint(pt_check);
+                        let on_host = cursor_wnd.is_null()
+                            || cursor_wnd == hwnd
+                            || winapi::um::winuser::IsChild(hwnd, cursor_wnd) != 0;
+                        if !on_host {
+                            log::debug!(
+                                "editable_focus suppress virtual-cursor: cursor=({},{}) over foreign window cursor_hwnd={:?} host_hwnd={:?}",
+                                cx, cy, cursor_wnd, hwnd
+                            );
+                            return Ok((false, -1, None, None));
+                        }
+                    }
                     // The editable element's rect is far from where the user clicked.
                     // Use cursor position as the synthetic editor location and preserve
                     // any visible content container that ElementFromPoint surfaced.
@@ -1693,6 +1730,43 @@ unsafe fn probe_via_uia(
 
     CoUninitialize();
     let (ed, kind, rect, pane) = result.unwrap_or((false, 0, None, None));
+
+    // Post-probe guard: "visible-bottom-input drift" suppression.
+    //
+    // Chrome (and similar apps) keeps keyboard focus on the find bar even when the
+    // cursor moves below it into the content area heading toward the taskbar. Every
+    // other detection path (GetFocusedElement, caret fallback, sticky reuse, cursor
+    // proxy reuse) would keep reporting editable=true, causing HarmonyOS to enter IME
+    // mode and consume the first taskbar tap as a text-input event.
+    //
+    // Fix: if the probed editor rect looks like a visible-bottom-input (thin wide strip
+    // at the window bottom — Chrome find bar, bottom chat boxes, etc.) AND the cursor
+    // is more than 8 px away from it, treat the result as "drift-suppressed" (kind=-2).
+    // kind=-2 is handled specially in get_editable_focus_hint_impl to:
+    //   1. Skip try_reuse_sticky_hint_on_hard_negative
+    //   2. Skip the caret fallback
+    //   3. Clear the EDITABLE_FOCUS_STICKY cache so finalize doesn't re-apply it
+    if ed {
+        if let Some(r) = rect {
+            let mut cpt = winapi::shared::windef::POINT { x: 0, y: 0 };
+            let cursor_near = unsafe { winapi::um::winuser::GetCursorPos(&mut cpt) == 0 }
+                || point_near_rect(r, cpt.x, cpt.y, 8);
+            if !cursor_near {
+                // Use the element's own centre as the "cursor" arg so that the
+                // side_anchored / lower_half / width checks in
+                // looks_like_visible_bottom_input_rect work purely on geometry.
+                let r_center = (r.0 + r.2 / 2, r.1 + r.3 / 2);
+                if unsafe { looks_like_visible_bottom_input_rect(r, hwnd_screen_rect(hwnd), r_center) } {
+                    log::debug!(
+                        "editable_focus suppress visible-bottom-input drift: cursor=({},{}) rect={:?} (kind=-2)",
+                        cpt.x, cpt.y, r
+                    );
+                    return (false, -2, None, None, efp_class_out);
+                }
+            }
+        }
+    }
+
     (ed, kind, rect, pane, efp_class_out)
 }
 
@@ -1844,6 +1918,16 @@ unsafe fn get_editable_focus_hint_impl(displays: &[DisplayInfo]) -> Option<Edita
     }
 
     if !actionable_editable {
+        if content_kind == -2 {
+            // "Visible-bottom-input drift" suppression (from probe_via_uia post-probe
+            // guard). The cursor has moved more than 8 px away from a visible-bottom-input
+            // element (e.g. Chrome find bar). Clear sticky so finalize cannot resurrect
+            // the old editable=true hint via proximity/transient reuse, and return
+            // not_editable immediately — skipping both sticky reuse and caret fallback
+            // (both of which would regenerate editable=true for the same element).
+            *EDITABLE_FOCUS_STICKY.lock().unwrap() = None;
+            return Some(finalize_editable_focus_hint(fg_hwnd, not_editable.clone()));
+        }
         if content_kind == -1 {
             if let Some(reused) = try_reuse_sticky_hint_on_hard_negative(fg_hwnd) {
                 return Some(reused);
