@@ -95,6 +95,22 @@ class _RemotePageState extends State<RemotePage>
   // Uses kDefaultPointerLockCenterThrottleMs from consts.dart for the duration.
   Timer? _pointerLockCenterDebounceTimer;
 
+  // ---- IME support (Chinese / Japanese / Korean input) for Windows ----
+  // On Windows, Chinese IME characters are committed via WM_IME_COMPOSITION →
+  // WM_CHAR and delivered to Flutter's TextInputClient, NOT as KeyEvent.  A
+  // hidden TextField captures the committed text; we forward it via
+  // sessionInputString (which uses KEYEVENTF_UNICODE on the server side).
+  // While IME is composing, we suppress raw key-events so the pinyin letters
+  // are not forwarded to the remote PC.
+  final TextEditingController _imeCtrl = TextEditingController();
+  final FocusNode _imeFocusNode = FocusNode(debugLabel: "imeFocusNode");
+  // Sentinel buffer: 200 zero-width spaces give us "backspace fuel" without
+  // polluting the visible text.  The real content starts after all sentinels.
+  static const String _imeSentinel = '\u200B';
+  static const int _imeSentinelCount = 200;
+  String _imeContent = _imeSentinel * _imeSentinelCount;
+  bool _imeSuppressNext = false; // ignore the first onChange after a refill
+
   // We need `_instanceIdOnEnterOrLeaveImage4Toolbar` together with `_onEnterOrLeaveImage4Toolbar`
   // to identify the toolbar instance and its callback function.
   int? _instanceIdOnEnterOrLeaveImage4Toolbar;
@@ -184,6 +200,74 @@ class _RemotePageState extends State<RemotePage>
     // Register callback to cancel debounce timer when relative mouse mode is disabled
     _ffi.inputModel.onRelativeMouseModeDisabled =
         _cancelPointerLockCenterDebounceTimer;
+
+    // Initialize the hidden IME TextField with sentinel buffer.
+    if (isWindows) {
+      _imeCtrl.text = _imeContent;
+      _imeCtrl.selection =
+          TextSelection.collapsed(offset: _imeContent.length);
+    }
+  }
+
+  // ---- IME onChange handler ----
+  // Called by the hidden TextField whenever text changes due to:
+  //   (a) user typing a regular key → handled by onKeyEvent, ignore here
+  //   (b) IME committing a composed character (Chinese/Japanese) → forward it
+  //   (c) user pressing Backspace inside IME candidate list → ignore (IME internal)
+  // Suppression sentinel: 200 zero-width spaces at the start of the buffer give
+  // us "backspace fuel" so that IME can consume them rather than modifying real text.
+  void _onImeChanged(String val) {
+    if (_imeSuppressNext) {
+      // This change was triggered by our own programmatic refill; skip it.
+      _imeContent = val;
+      _imeSuppressNext = false;
+      return;
+    }
+    final prev = _imeContent;
+    if (val.length > prev.length) {
+      // New characters were committed (could be Chinese or ASCII).
+      // Extract only the newly appended slice, skip zero-width sentinels.
+      final added = val.substring(prev.length);
+      final realChars = added.replaceAll(_imeSentinel, '');
+      if (realChars.isNotEmpty) {
+        // Only forward if at least one character is non-ASCII (CJK / emoji etc.).
+        // ASCII characters are already handled by the raw key-event path; forwarding
+        // them here would duplicate strokes.
+        final hasNonAscii = realChars.codeUnits.any((c) => c > 127);
+        if (hasNonAscii) {
+          bind.sessionInputString(sessionId: sessionId, value: realChars);
+        }
+      }
+    } else if (val.length < prev.length) {
+      // Characters were deleted.
+      // If every deleted char is a sentinel, this is IME-internal editing; skip.
+      final removed = prev.substring(val.length);
+      final allSentinel = removed.codeUnits.every((c) => c == 0x200B);
+      if (!allSentinel) {
+        // Real deletion: forward Backspace for each removed non-sentinel.
+        final realDeleted =
+            removed.codeUnits.where((c) => c != 0x200B).length;
+        for (int i = 0; i < realDeleted; i++) {
+          _ffi.inputModel.inputKey('BackSpace', press: true);
+        }
+      }
+    }
+    _imeContent = val;
+
+    // Refill sentinel buffer when running low, so Backspace always has fuel.
+    final sentinelRemaining =
+        val.codeUnits.takeWhile((c) => c == 0x200B).length;
+    if (sentinelRemaining < 20) {
+      Future.microtask(() {
+        final refill = _imeSentinel * _imeSentinelCount;
+        _imeSuppressNext = true;
+        _imeCtrl.value = TextEditingValue(
+          text: refill,
+          selection: TextSelection.collapsed(offset: refill.length),
+        );
+        _imeContent = refill;
+      });
+    }
   }
 
   /// Cancel the pointer lock center debounce timer
@@ -337,6 +421,8 @@ class _RemotePageState extends State<RemotePage>
     _ffi.imageModel.disposeImage();
     _ffi.cursorModel.disposeImages();
     _rawKeyFocusNode.dispose();
+    _imeCtrl.dispose();
+    _imeFocusNode.dispose();
     if (!_ffi.closed) {
       await _ffi.close(closeSession: closeSession);
     }
@@ -405,13 +491,44 @@ class _RemotePageState extends State<RemotePage>
                       }
                       if (imageFocused) {
                         _ffi.inputModel.enterOrLeave(true);
+                        // Re-focus IME field so that it can receive composition
+                        if (isWindows) _imeFocusNode.requestFocus();
                       } else {
                         _ffi.inputModel.enterOrLeave(false);
                       }
                     }
                   },
                   inputModel: _ffi.inputModel,
-                  child: getBodyForDesktop(context))),
+                  isImeComposing: isWindows
+                      ? () => _imeCtrl.value.composing.isValid &&
+                          _imeCtrl.value.composing.start !=
+                              _imeCtrl.value.composing.end
+                      : null,
+                  child: Stack(
+                    children: [
+                      getBodyForDesktop(context),
+                      // Hidden TextField that receives Windows IME committed text.
+                      // Must be inside the FocusScope so that parent onKeyEvent
+                      // still fires while this TextField has primary focus.
+                      if (isWindows)
+                        Positioned(
+                          left: -9999,
+                          top: -9999,
+                          child: SizedBox(
+                            width: 1,
+                            height: 1,
+                            child: TextField(
+                              focusNode: _imeFocusNode,
+                              controller: _imeCtrl,
+                              autofocus: true,
+                              enableSuggestions: false,
+                              autocorrect: false,
+                              onChanged: _onImeChanged,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ))),
           Stack(
             children: [
               _ffi.ffiModel.pi.isSet.isTrue &&
