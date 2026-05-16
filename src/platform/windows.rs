@@ -567,8 +567,8 @@ unsafe fn hwnd_window_text(hwnd: HWND) -> String {
     }
     let mut text = String::from_utf16_lossy(&buf[..len]);
     text = text.replace('\r', " ").replace('\n', " ");
-    if text.len() > 80 {
-        text.truncate(80);
+    if text.chars().count() > 80 {
+        text = text.chars().take(80).collect();
     }
     text
 }
