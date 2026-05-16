@@ -18,17 +18,12 @@ class RawKeyFocusScope extends StatelessWidget {
   final ValueChanged<bool>? onFocusChange;
   final InputModel inputModel;
   final Widget child;
-  // Optional: returns true when local IME composition is in progress.
-  // When composing, raw key events (pinyin letters) must NOT be forwarded
-  // to the remote PC; only the committed character should be sent.
-  final bool Function()? isImeComposing;
 
   RawKeyFocusScope({
     this.focusNode,
     this.onFocusChange,
     required this.inputModel,
     required this.child,
-    this.isImeComposing,
   });
 
   @override
@@ -50,14 +45,8 @@ class RawKeyFocusScope extends StatelessWidget {
                 : null,
             onKeyEvent: useRawKeyEvents
                 ? null
-                : (FocusNode node, KeyEvent event) {
-                    // Suppress key events during IME composition so that
-                    // pinyin letters are not forwarded to the remote PC.
-                    if (isImeComposing != null && isImeComposing!()) {
-                      return KeyEventResult.handled;
-                    }
-                    return inputModel.handleKeyEvent(event);
-                  },
+                : (FocusNode node, KeyEvent event) =>
+                    inputModel.handleKeyEvent(event),
             child: child));
   }
 }
