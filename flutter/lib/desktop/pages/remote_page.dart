@@ -110,6 +110,14 @@ class _RemotePageState extends State<RemotePage>
   static const int _imeSentinelCount = 200;
   String _imeContent = _imeSentinel * _imeSentinelCount;
   bool _imeSuppressNext = false; // ignore the first onChange after a refill
+  // Tracks whether the IME was in a composing state during the previous onChanged.
+  // Used to detect the transition composing→committed and extract the committed text.
+  bool _wasComposing = false;
+  // Non-sentinel text that existed in the buffer BEFORE the current composition
+  // started.  Used as a baseline so that the commit step only sends the *newly*
+  // committed characters, even if a previous commit's text is still physically
+  // present in the buffer (fast typing before the async sentinel refill fires).
+  String _imePreCompositionNonSentinel = '';
 
   // We need `_instanceIdOnEnterOrLeaveImage4Toolbar` together with `_onEnterOrLeaveImage4Toolbar`
   // to identify the toolbar instance and its callback function.
@@ -210,43 +218,82 @@ class _RemotePageState extends State<RemotePage>
   }
 
   // ---- IME onChange handler ----
-  // Called by the hidden TextField whenever text changes due to:
-  //   (a) user typing a regular key → handled by onKeyEvent, ignore here
-  //   (b) IME committing a composed character (Chinese/Japanese) → forward it
-  //   (c) user pressing Backspace inside IME candidate list → ignore (IME internal)
-  // Suppression sentinel: 200 zero-width spaces at the start of the buffer give
-  // us "backspace fuel" so that IME can consume them rather than modifying real text.
+  // Called by the hidden TextField whenever text changes.
+  //
+  // The critical scenario this must handle correctly:
+  //   Composing phase  : user types pinyin letters (e.g. 'n','i')
+  //                      → text = "[200 sentinels]ni", composing range valid
+  //                      → do NOT forward; pinyin must stay local only
+  //   Commit phase     : user selects a Chinese character (e.g. '你')
+  //                      → text = "[200 sentinels]你", composing range empty
+  //                      → the PREVIOUS code used naive length comparison:
+  //                        prev.length=202 > val.length=201 → deletion branch
+  //                        → sent Backspace to remote! WRONG.
+  //                      → NEW code: detect composing→committed transition,
+  //                        extract non-sentinel chars and forward via sessionInputString.
   void _onImeChanged(String val) {
     if (_imeSuppressNext) {
-      // This change was triggered by our own programmatic refill; skip it.
-      _imeContent = val;
       _imeSuppressNext = false;
+      _imeContent = val;
+      // Do NOT reset _wasComposing here: the suppress fires from our own refill,
+      // which happens AFTER commit.  At that point _wasComposing is already false.
       return;
     }
+
+    final composing = _imeCtrl.value.composing;
+    final nowComposing = composing.isValid && composing.start < composing.end;
+
+    if (nowComposing) {
+      if (!_wasComposing) {
+        // Record the non-sentinel content present BEFORE this composition starts.
+        // This baseline is subtracted at commit time to avoid re-forwarding chars
+        // from a previous commit that are still physically in the buffer.
+        _imePreCompositionNonSentinel =
+            _imeContent.replaceAll(_imeSentinel, '');
+      }
+      _imeContent = val;
+      _wasComposing = true;
+      return;
+    }
+
+    if (_wasComposing) {
+      // Composition just ended — extract only the *newly* committed characters.
+      final allNonSentinel = val.replaceAll(_imeSentinel, '');
+      final String committed;
+      if (allNonSentinel.startsWith(_imePreCompositionNonSentinel)) {
+        // Normal case: committed chars are appended after any pre-existing text.
+        committed = allNonSentinel.substring(
+            _imePreCompositionNonSentinel.length);
+      } else {
+        // Unexpected: IME replaced/reordered existing text; forward all non-sentinel.
+        committed = allNonSentinel;
+      }
+      if (committed.isNotEmpty) {
+        bind.sessionInputString(sessionId: sessionId, value: committed);
+      }
+      _wasComposing = false;
+      _imePreCompositionNonSentinel = '';
+      _imeContent = val;
+      _refillSentinelBuffer();
+      return;
+    }
+
+    // Not composing and wasn't composing — handle direct char insertion or deletion.
     final prev = _imeContent;
     if (val.length > prev.length) {
-      // New characters were committed (could be Chinese or ASCII).
-      // Extract only the newly appended slice, skip zero-width sentinels.
       final added = val.substring(prev.length);
       final realChars = added.replaceAll(_imeSentinel, '');
-      if (realChars.isNotEmpty) {
-        // Only forward if at least one character is non-ASCII (CJK / emoji etc.).
-        // ASCII characters are already handled by the raw key-event path; forwarding
-        // them here would duplicate strokes.
-        final hasNonAscii = realChars.codeUnits.any((c) => c > 127);
-        if (hasNonAscii) {
-          bind.sessionInputString(sessionId: sessionId, value: realChars);
-        }
+      if (realChars.isNotEmpty && realChars.codeUnits.any((c) => c > 127)) {
+        // Non-ASCII character inserted without IME composing phase (rare on Windows;
+        // possible with some IMEs that commit directly without composing range).
+        bind.sessionInputString(sessionId: sessionId, value: realChars);
       }
     } else if (val.length < prev.length) {
-      // Characters were deleted.
-      // If every deleted char is a sentinel, this is IME-internal editing; skip.
+      // Characters deleted — forward Backspace for each real (non-sentinel) deletion.
       final removed = prev.substring(val.length);
       final allSentinel = removed.codeUnits.every((c) => c == 0x200B);
       if (!allSentinel) {
-        // Real deletion: forward Backspace for each removed non-sentinel.
-        final realDeleted =
-            removed.codeUnits.where((c) => c != 0x200B).length;
+        final realDeleted = removed.codeUnits.where((c) => c != 0x200B).length;
         for (int i = 0; i < realDeleted; i++) {
           _ffi.inputModel.inputKey('BackSpace', press: true);
         }
@@ -254,20 +301,26 @@ class _RemotePageState extends State<RemotePage>
     }
     _imeContent = val;
 
-    // Refill sentinel buffer when running low, so Backspace always has fuel.
+    // Refill sentinel buffer when running low, so deletion events always have fuel.
+    // Count ALL remaining sentinel characters (not just the leading prefix) to
+    // correctly detect low-fuel even if sentinels are scattered by mid-text inserts.
     final sentinelRemaining =
-        val.codeUnits.takeWhile((c) => c == 0x200B).length;
+        val.codeUnits.where((c) => c == 0x200B).length;
     if (sentinelRemaining < 20) {
-      Future.microtask(() {
-        final refill = _imeSentinel * _imeSentinelCount;
-        _imeSuppressNext = true;
-        _imeCtrl.value = TextEditingValue(
-          text: refill,
-          selection: TextSelection.collapsed(offset: refill.length),
-        );
-        _imeContent = refill;
-      });
+      _refillSentinelBuffer();
     }
+  }
+
+  void _refillSentinelBuffer() {
+    Future.microtask(() {
+      final refill = _imeSentinel * _imeSentinelCount;
+      _imeSuppressNext = true;
+      _imeCtrl.value = TextEditingValue(
+        text: refill,
+        selection: TextSelection.collapsed(offset: refill.length),
+      );
+      _imeContent = refill;
+    });
   }
 
   /// Cancel the pointer lock center debounce timer
@@ -311,6 +364,11 @@ class _RemotePageState extends State<RemotePage>
     if (_ffi.inputModel.relativeMouseMode.value) {
       _rawKeyFocusNode.requestFocus();
       _ffi.inputModel.onWindowFocus();
+    } else if (isWindows) {
+      // Restore focus to the raw-key Focus node so that onFocusChange(true)
+      // fires, which in turn re-focuses _imeFocusNode for IME input.
+      // (onWindowBlur calls _rawKeyFocusNode.unfocus(), clearing focus state.)
+      _rawKeyFocusNode.requestFocus();
     }
   }
 
@@ -321,6 +379,8 @@ class _RemotePageState extends State<RemotePage>
     // a minimized state.
     if (isWindows) {
       _isWindowBlur = false;
+      // Restore focus so that IME input works immediately after unminimize.
+      _rawKeyFocusNode.requestFocus();
     }
     WakelockManager.enable(_uniqueKey);
     // Update pointer lock center when window is restored
@@ -482,20 +542,21 @@ class _RemotePageState extends State<RemotePage>
                     debugPrint(
                         "onFocusChange(window active:${!_isWindowBlur}) $imageFocused");
                     // See [onWindowBlur].
-                    if (isWindows) {
-                      if (_isWindowBlur) {
-                        imageFocused = false;
-                        Future.delayed(Duration.zero, () {
-                          _rawKeyFocusNode.unfocus();
-                        });
-                      }
-                      if (imageFocused) {
-                        _ffi.inputModel.enterOrLeave(true);
-                        // Re-focus IME field so that it can receive composition
-                        if (isWindows) _imeFocusNode.requestFocus();
-                      } else {
-                        _ffi.inputModel.enterOrLeave(false);
-                      }
+                    if (isWindows && _isWindowBlur) {
+                      imageFocused = false;
+                      Future.delayed(Duration.zero, () {
+                        _rawKeyFocusNode.unfocus();
+                      });
+                    }
+                    // enterOrLeave must be called on all platforms (was incorrectly
+                    // gated inside `if (isWindows)` which broke macOS/Linux).
+                    if (imageFocused) {
+                      _ffi.inputModel.enterOrLeave(true);
+                      // Re-focus the hidden IME TextField so Windows IME events
+                      // are delivered to it rather than the raw Focus node.
+                      if (isWindows) _imeFocusNode.requestFocus();
+                    } else {
+                      _ffi.inputModel.enterOrLeave(false);
                     }
                   },
                   inputModel: _ffi.inputModel,
@@ -512,18 +573,27 @@ class _RemotePageState extends State<RemotePage>
                       // still fires while this TextField has primary focus.
                       if (isWindows)
                         Positioned(
-                          left: -9999,
-                          top: -9999,
-                          child: SizedBox(
-                            width: 1,
-                            height: 1,
-                            child: TextField(
-                              focusNode: _imeFocusNode,
-                              controller: _imeCtrl,
-                              autofocus: true,
-                              enableSuggestions: false,
-                              autocorrect: false,
-                              onChanged: _onImeChanged,
+                          // Place near the bottom-left so the OS IME candidate
+                          // window appears in a reachable screen position.
+                          left: 4,
+                          bottom: 4,
+                          child: ExcludeSemantics(
+                            child: IgnorePointer(
+                              child: Opacity(
+                                opacity: 0.0,
+                                child: SizedBox(
+                                  width: 1,
+                                  height: 1,
+                                  child: TextField(
+                                    focusNode: _imeFocusNode,
+                                    controller: _imeCtrl,
+                                    autofocus: true,
+                                    enableSuggestions: false,
+                                    autocorrect: false,
+                                    onChanged: _onImeChanged,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
