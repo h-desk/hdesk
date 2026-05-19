@@ -282,10 +282,7 @@ Win32Window::MessageHandler(HWND hwnd,
     }
 
     case WM_ACTIVATE:
-      if (wparam != WA_INACTIVE && ::IsIconic(window_handle_)) {
-        ::ShowWindow(window_handle_, SW_RESTORE);
-      }
-      if (child_content_ != nullptr) {
+      if (wparam != WA_INACTIVE && child_content_ != nullptr) {
         SetFocus(child_content_);
       }
       return 0;
