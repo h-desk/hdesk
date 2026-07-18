@@ -10,12 +10,15 @@ import 'package:flutter_hbb/common/widgets/custom_password.dart';
 import 'package:flutter_hbb/consts.dart';
 import 'package:flutter_hbb/desktop/pages/connection_page.dart';
 import 'package:flutter_hbb/desktop/pages/desktop_setting_page.dart';
+import 'package:flutter_hbb/desktop/pages/settings_dialog_utils.dart';
 import 'package:flutter_hbb/desktop/utils/home_window_size_utils.dart';
 import 'package:flutter_hbb/desktop/utils/theme_sync_utils.dart';
 import 'package:flutter_hbb/desktop/widgets/refresh_wrapper.dart';
 import 'package:flutter_hbb/models/platform_model.dart';
 import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
+import 'package:flutter_hbb/native/win32.dart'
+    if (dart.library.html) 'package:flutter_hbb/web/win32.dart';
 import 'package:flutter_hbb/plugin/ui_manager.dart';
 import 'package:flutter_hbb/utils/multi_window_manager.dart';
 import 'package:flutter_hbb/utils/platform_channel.dart';
@@ -502,6 +505,10 @@ class _DesktopHomePageState extends State<DesktopHomePage>
 
         final client = activeSessions.first;
         final hasMultipleControllers = activeSessions.length > 1;
+        final isDisconnecting = hasMultipleControllers
+            ? activeSessions.every((session) =>
+                model.isDesktopControlledSessionClosing(session.id))
+            : model.isDesktopControlledSessionClosing(client.id);
         final avatar = buildAvatarWidget(
               avatar: client.avatar,
               size: 36,
@@ -609,23 +616,49 @@ class _DesktopHomePageState extends State<DesktopHomePage>
                 SizedBox(
                   width: double.infinity,
                   child: TextButton(
-                    onPressed: disconnect,
+                    onPressed: isDisconnecting ? null : disconnect,
                     style: TextButton.styleFrom(
                       alignment: Alignment.center,
                       foregroundColor: Colors.white,
                       backgroundColor: const Color(0xFFE66A6A),
+                      disabledForegroundColor: Colors.white,
+                      disabledBackgroundColor:
+                          const Color(0xFFE66A6A).withOpacity(0.65),
                       padding: const EdgeInsets.symmetric(vertical: 9),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
-                    child: Text(
-                      hasMultipleControllers ? '全部断开' : translate('Disconnect'),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        height: 1.0,
+                    child: SizedBox(
+                      height: 16,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isDisconnecting) ...[
+                            const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            isDisconnecting
+                                ? '正在断开…'
+                                : hasMultipleControllers
+                                    ? '全部断开'
+                                    : translate('Disconnect'),
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              height: 1.0,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -1732,10 +1765,34 @@ Future<void> _showStandalonePasswordWindow() async {
       if (isWindows) {
         controller.setInitBackgroundColor(Colors.transparent);
       }
-      final frameSize = isMacOS ? _macOSPasswordWindowSize : _passwordWindowSize;
-      await controller.setFrame(const Offset(0, 0) & frameSize);
-      await controller.center();
-      await controller.setTitle(getWindowName(overrideType: WindowType.Password));
+      final frameSize =
+          isMacOS ? _macOSPasswordWindowSize : _passwordWindowSize;
+      var frame = const Offset(0, 0) & frameSize;
+      var frameAlreadyCentered = false;
+      if (isWindows) {
+        final screen = (await window_size.getWindowInfo()).screen;
+        if (screen != null) {
+          frame = computeDpiAwareDialogFrame(
+            visibleFrame: screen.visibleFrame,
+            scaleFactor: screen.scaleFactor,
+            preferredLogicalSize: frameSize,
+            horizontalPadding: 32,
+            heightFactor: 0.9,
+            minimumLogicalWidth: 360,
+            minimumLogicalHeight: 320,
+          );
+          frameAlreadyCentered = true;
+        }
+      }
+      await controller.setFrame(frame);
+      if (!frameAlreadyCentered) {
+        await controller.center();
+      }
+      final windowTitle = getWindowName(overrideType: WindowType.Password);
+      await controller.setTitle(windowTitle);
+      if (isWindows && !setWindowResizableByTitle_(windowTitle, false)) {
+        debugPrint('Failed to disable resizing for the password window.');
+      }
       await controller.show();
       await controller.focus();
     }();
@@ -1766,6 +1823,7 @@ class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
   late final RxString _password;
   late final List<ValidationRule> _rules;
   late final int _maxLength;
+  final ScrollController _scrollController = ScrollController();
 
   String _passwordError = '';
   String _confirmationError = '';
@@ -1798,6 +1856,7 @@ class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _passwordController.dispose();
     _confirmationController.dispose();
     super.dispose();
@@ -1952,76 +2011,93 @@ class _DesktopPasswordWindowPageState extends State<DesktopPasswordWindowPage> {
             ),
           ),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(
-                    controller: _passwordController,
-                    obscureText: true,
-                    autofocus: true,
-                    maxLength: _maxLength,
-                    decoration: InputDecoration(
-                      labelText: translate('Password'),
-                      errorText:
-                          _passwordError.isEmpty ? null : _passwordError,
-                      counterText: '',
-                    ),
-                    onChanged: (value) {
-                      _password.value = value.trim();
-                      setState(() {
-                        _passwordError = '';
-                      });
-                    },
-                  ).workaroundFreezeLinuxMint(),
-                  const SizedBox(height: 6),
-                  PasswordStrengthIndicator(password: _password),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _confirmationController,
-                    obscureText: true,
-                    maxLength: _maxLength,
-                    decoration: InputDecoration(
-                      labelText: translate('Confirmation'),
-                      errorText: _confirmationError.isEmpty
-                          ? null
-                          : _confirmationError,
-                      counterText: '',
-                    ),
-                    onChanged: (_) {
-                      setState(() {
-                        _confirmationError = '';
-                      });
-                    },
-                  ).workaroundFreezeLinuxMint(),
-                  const Spacer(),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16, bottom: 6),
-                    child: Align(
-                      alignment: Alignment.centerRight,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
+            child: Column(
+              children: [
+                Expanded(
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    thumbVisibility: true,
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(20, 18, 12, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          OutlinedButton.icon(
-                            onPressed: _closeWindow,
-                            style: _actionButtonStyle(context, outline: true),
-                            icon: const Icon(Icons.close_rounded),
-                            label: Text(translate('Cancel')),
-                          ),
-                          const SizedBox(width: 10),
-                          ElevatedButton.icon(
-                            onPressed: _canSubmit ? _submit : null,
-                            style: _actionButtonStyle(context),
-                            icon: const Icon(Icons.done_rounded),
-                            label: Text(translate('OK')),
-                          ),
+                          TextField(
+                            controller: _passwordController,
+                            obscureText: true,
+                            autofocus: true,
+                            maxLength: _maxLength,
+                            decoration: InputDecoration(
+                              labelText: translate('Password'),
+                              errorText: _passwordError.isEmpty
+                                  ? null
+                                  : _passwordError,
+                              counterText: '',
+                            ),
+                            onChanged: (value) {
+                              _password.value = value.trim();
+                              setState(() {
+                                _passwordError = '';
+                              });
+                            },
+                          ).workaroundFreezeLinuxMint(),
+                          const SizedBox(height: 6),
+                          PasswordStrengthIndicator(password: _password),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: _confirmationController,
+                            obscureText: true,
+                            maxLength: _maxLength,
+                            decoration: InputDecoration(
+                              labelText: translate('Confirmation'),
+                              errorText: _confirmationError.isEmpty
+                                  ? null
+                                  : _confirmationError,
+                              counterText: '',
+                            ),
+                            onChanged: (_) {
+                              setState(() {
+                                _confirmationError = '';
+                              });
+                            },
+                          ).workaroundFreezeLinuxMint(),
                         ],
                       ),
                     ),
                   ),
-                ],
-              ),
+                ),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(color: Theme.of(context).dividerColor),
+                    ),
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _closeWindow,
+                          style: _actionButtonStyle(context, outline: true),
+                          icon: const Icon(Icons.close_rounded),
+                          label: Text(translate('Cancel')),
+                        ),
+                        const SizedBox(width: 10),
+                        ElevatedButton.icon(
+                          onPressed: _canSubmit ? _submit : null,
+                          style: _actionButtonStyle(context),
+                          icon: const Icon(Icons.done_rounded),
+                          label: Text(translate('OK')),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ],

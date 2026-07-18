@@ -24,8 +24,6 @@ import 'model.dart';
 const kLoginDialogTag = "LOGIN";
 const kDesktopControlledSessionsOptionKey =
     'hdesk-desktop-controlled-sessions';
-const kDesktopControlledCloseRequestOptionKey =
-  'hdesk-desktop-controlled-close-request';
 
 const kUseTemporaryPassword = "use-temporary-password";
 const kUsePermanentPassword = "use-permanent-password";
@@ -163,8 +161,6 @@ class ServerModel with ChangeNotifier {
   final Set<int> _notifiedDesktopConnectionIds = <int>{};
   String _lastDesktopControlledSessionsOptionValue = '';
   String _lastPublishedDesktopControlledSessionsOptionValue = '';
-  String _lastDesktopControlledCloseRequestValue = '';
-  String _lastProcessedDesktopControlledCloseRequestToken = '';
 
   Timer? cmHiddenTimer;
 
@@ -387,7 +383,6 @@ class ServerModel with ChangeNotifier {
             hideCmWindow();
           }
         }
-        await _consumeDesktopControlledCloseRequest();
         _publishDesktopControlledSessionsSnapshot();
       }
 
@@ -1002,7 +997,7 @@ class ServerModel with ChangeNotifier {
   }
 
   Future<void> closeDesktopControlledSession(int connId) async {
-    await _requestDesktopControlledSessionsClose(<int>[connId]);
+    await _closeDesktopControlledSessions(<int>[connId]);
   }
 
   Future<void> closeAllDesktopControlledSessions() async {
@@ -1010,7 +1005,11 @@ class ServerModel with ChangeNotifier {
     if (ids.isEmpty) {
       return;
     }
-    await _requestDesktopControlledSessionsClose(ids.toList(growable: false));
+    await _closeDesktopControlledSessions(ids.toList(growable: false));
+  }
+
+  bool isDesktopControlledSessionClosing(int connId) {
+    return _pendingDesktopControlledCloseIds.contains(connId);
   }
 
   void jumpTo(int id) {
@@ -1126,7 +1125,7 @@ class ServerModel with ChangeNotifier {
     }
   }
 
-  Future<void> _requestDesktopControlledSessionsClose(List<int> ids) async {
+  Future<void> _closeDesktopControlledSessions(List<int> ids) async {
     final distinctIds = ids
         .where((id) => id > 0)
         .where((id) => !_pendingDesktopControlledCloseIds.contains(id))
@@ -1136,70 +1135,31 @@ class ServerModel with ChangeNotifier {
       return;
     }
     _pendingDesktopControlledCloseIds.addAll(distinctIds);
-    final payload = jsonEncode({
-      'token': DateTime.now().microsecondsSinceEpoch.toString(),
-      'ids': distinctIds,
-    });
+    notifyListeners();
     DesktopCrashTrace.log(
-        'ServerModel.requestDesktopControlledSessionsClose ids=${distinctIds.join(',')}');
+        'ServerModel.closeDesktopControlledSessions ids=${distinctIds.join(',')}');
     try {
-      await bind.mainSetOption(
-          key: kDesktopControlledCloseRequestOptionKey, value: payload);
+      await Future.wait(distinctIds
+          .map((connId) => bind.cmCloseConnection(connId: connId)));
     } catch (e) {
       _pendingDesktopControlledCloseIds.removeAll(distinctIds);
+      notifyListeners();
       DesktopCrashTrace.log(
-          'ServerModel.requestDesktopControlledSessionsClose failed error=$e');
+          'ServerModel.closeDesktopControlledSessions failed error=$e');
+      return;
     }
-  }
 
-  Future<void> _consumeDesktopControlledCloseRequest() async {
-    if (!isDesktop || desktopType != DesktopType.cm) {
-      return;
-    }
-    final raw = await bind.mainGetOption(key: kDesktopControlledCloseRequestOptionKey);
-    if (raw.isEmpty || raw == _lastDesktopControlledCloseRequestValue) {
-      return;
-    }
-    _lastDesktopControlledCloseRequestValue = raw;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) {
+    Future.delayed(const Duration(seconds: 5), () {
+      final activeIds = desktopControlledSessions.map((session) => session.id).toSet();
+      final timedOutIds = distinctIds.where(activeIds.contains).toList();
+      if (timedOutIds.isEmpty) {
         return;
       }
-      final payload = Map<String, dynamic>.from(decoded);
-      final token = (payload['token'] ?? '').toString();
-      if (token.isEmpty || token == _lastProcessedDesktopControlledCloseRequestToken) {
-        return;
-      }
-      final rawIds = payload['ids'];
-      if (rawIds is! List) {
-        return;
-      }
-      _lastProcessedDesktopControlledCloseRequestToken = token;
-      final activeIds = _clients.map((client) => client.id).toSet();
-      final closeIds = rawIds
-          .map((id) => DesktopControlledSession._parseId(id))
-          .where((id) => id > 0 && activeIds.contains(id))
-          .toList(growable: false);
-      if (closeIds.isEmpty) {
-        DesktopCrashTrace.log(
-            'ServerModel.consumeDesktopControlledCloseRequest no-active-target token=$token');
-      }
-      for (final connId in closeIds) {
-        DesktopCrashTrace.log(
-            'ServerModel.consumeDesktopControlledCloseRequest close connId=$connId token=$token');
-        await bind.cmCloseConnection(connId: connId);
-      }
-    } catch (e) {
+      _pendingDesktopControlledCloseIds.removeAll(timedOutIds);
       DesktopCrashTrace.log(
-          'ServerModel.consumeDesktopControlledCloseRequest failed error=$e payload=$raw');
-    } finally {
-      try {
-        await bind.mainSetOption(
-            key: kDesktopControlledCloseRequestOptionKey, value: '');
-      } catch (_) {}
-      _lastDesktopControlledCloseRequestValue = '';
-    }
+          'ServerModel.closeDesktopControlledSessions timeout ids=${timedOutIds.join(',')}');
+      notifyListeners();
+    });
   }
 
   void setShowElevation(bool show) {

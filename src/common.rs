@@ -978,9 +978,9 @@ pub const OFFICIAL_UPDATE_SERVER_LATEST_JSON_URL: &str =
 pub const OFFICIAL_GITHUB_REPO_URL: &str = "https://github.com/h-desk/hdesk";
 pub const OFFICIAL_GITHUB_RELEASES_URL: &str = "https://github.com/h-desk/hdesk/releases";
 #[cfg(target_os = "windows")]
-pub const OFFICIAL_WINDOWS_UPDATE_VERSION: &str = "1.0.1";
+pub const OFFICIAL_WINDOWS_UPDATE_VERSION: &str = "1.0.2";
 #[cfg(target_os = "windows")]
-pub const OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL: &str = "https://apps.yunjichuangzhi.cn/hdesk/releases/download/1.0.1/hdesk-1.0.1-x86_64.exe";
+pub const OFFICIAL_WINDOWS_UPDATE_DOWNLOAD_URL: &str = "https://apps.yunjichuangzhi.cn/hdesk/releases/download/1.0.2/hdesk-1.0.2-x86_64.exe";
 
 #[inline]
 pub fn use_official_update_channel() -> bool {

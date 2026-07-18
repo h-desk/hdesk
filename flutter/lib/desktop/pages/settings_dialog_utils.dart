@@ -54,3 +54,39 @@ Size computeSettingsDialogSize(
     ),
   );
 }
+
+Rect computeDpiAwareDialogFrame({
+  required Rect visibleFrame,
+  required double scaleFactor,
+  required Size preferredLogicalSize,
+  double horizontalPadding = 48,
+  double heightFactor = 0.82,
+  double minimumLogicalWidth = 420,
+  double minimumLogicalHeight = 420,
+}) {
+  final scale = scaleFactor.isFinite && scaleFactor > 0 ? scaleFactor : 1.0;
+  final logicalViewport = Size(
+    visibleFrame.width / scale,
+    visibleFrame.height / scale,
+  );
+  final logicalSize = computeSettingsDialogSize(
+    logicalViewport,
+    horizontalPadding: horizontalPadding,
+    heightFactor: heightFactor,
+    preferredWidth: preferredLogicalSize.width,
+    preferredHeight: preferredLogicalSize.height,
+    minimumWidth: minimumLogicalWidth,
+    minimumHeight: minimumLogicalHeight,
+  );
+  final physicalSize = Size(
+    logicalSize.width * scale,
+    logicalSize.height * scale,
+  );
+
+  return Rect.fromLTWH(
+    visibleFrame.left + (visibleFrame.width - physicalSize.width) / 2,
+    visibleFrame.top + (visibleFrame.height - physicalSize.height) / 2,
+    physicalSize.width,
+    physicalSize.height,
+  );
+}

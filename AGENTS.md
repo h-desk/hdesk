@@ -1,13 +1,30 @@
 # RustDesk Guide 
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
+
+## Project Knowledge
+
+Use repository documentation as the source of truth. Tool-specific skills must
+link to these files instead of maintaining separate copies.
+
+- `docs/windows-desktop-development.md` - Windows toolchain, build profiles,
+  FRB generation, hwcodec, and fast iteration.
+- `docs/windows-build-install-validation.md` - runner, installed app, service,
+  and package validation.
+- `docs/windows-release-standard.md` - current release channel status, release
+  gates, signing, publishing, and rollback.
+- `docs/windows-store-release.md` - Microsoft Store/MSIX readiness and gaps.
+- `docs/windows-multi-window-and-crash-diagnostics.md` - multi-window, DPI,
+  disconnect, WER, dump, and Flutter native crash diagnostics.
+- `docs/windows-taskbar-and-editable-focus.md` - taskbar and editable-focus
+  diagnostics.
 
 ## Development Commands
 
 ### Build Commands
 - `cargo run` - Build and run the desktop application (requires libsciter library)
-- `python3 build.py --flutter` - Build Flutter version (desktop)
-- `python3 build.py --flutter --release` - Build Flutter version in release mode
+- `python build.py --flutter --skip-portable-pack` - Build the Windows Flutter runner without packaging
+- `python build.py --flutter` - Build the Windows Flutter runner and local HDesk EXE packages
 - `python3 build.py --hwcodec` - Build with hardware codec support
 - `python3 build.py --vram` - Build with VRAM feature (Windows only)
 - `cargo build --release` - Build Rust binary in release mode
@@ -27,6 +44,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `flutter/build_android.sh` - Android build script
 - `flutter/build_ios.sh` - iOS build script
 - `flutter/build_fdroid.sh` - F-Droid build script
+- `scripts/windows/build-install-validate.ps1` - Build, install, and validate a Windows package
 
 ## Project Architecture
 
@@ -63,6 +81,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Requires vcpkg for C++ dependencies: `libvpx`, `libyuv`, `opus`, `aom`
 - Set `VCPKG_ROOT` environment variable
 - Download appropriate Sciter library for legacy UI support
+- The validated local Windows Flutter SDK is `D:\software\flutter-3.41.4`
 
 ### Ignore Patterns
 When working with files, ignore these directories:

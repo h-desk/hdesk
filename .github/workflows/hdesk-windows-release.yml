@@ -53,6 +53,16 @@ jobs:
             raise SystemExit('Failed to read version from Cargo.toml')
           PY
           )
+          flutter_version=$(python - <<'PY'
+          from pathlib import Path
+          for line in Path('flutter/pubspec.yaml').read_text(encoding='utf-8').splitlines():
+            if line.startswith('version:'):
+              print(line.split(':', 1)[1].strip().split('+', 1)[0])
+              break
+          else:
+            raise SystemExit('Failed to read version from flutter/pubspec.yaml')
+          PY
+          )
           raw_tag='${{ inputs.release_tag }}'
           if [ -z "$raw_tag" ]; then
             raw_tag="$cargo_version"
@@ -60,6 +70,10 @@ jobs:
           version="${raw_tag#v}"
           if [ "$version" != "$cargo_version" ]; then
             echo "::error::Cargo.toml version ($cargo_version) does not match release version ($version)."
+            exit 1
+          fi
+          if [ "$flutter_version" != "$cargo_version" ]; then
+            echo "::error::flutter/pubspec.yaml version ($flutter_version) does not match Cargo.toml version ($cargo_version)."
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"

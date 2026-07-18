@@ -22,9 +22,12 @@ import 'package:flutter_hbb/models/server_model.dart';
 import 'package:flutter_hbb/models/state_model.dart';
 import 'package:flutter_hbb/plugin/manager.dart';
 import 'package:flutter_hbb/plugin/widgets/desktop_settings.dart';
+import 'package:flutter_hbb/native/win32.dart'
+    if (dart.library.html) 'package:flutter_hbb/web/win32.dart';
 import 'package:get/get.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+import 'package:window_size/window_size.dart' as window_size;
 
 import '../../common/widgets/dialog.dart';
 import '../../common/widgets/login.dart';
@@ -193,12 +196,34 @@ class DesktopSettingPage extends StatefulWidget {
         if (isWindows) {
           controller.setInitBackgroundColor(Colors.transparent);
         }
-        await controller.setFrame(
-          const Offset(0, 0) &
-              const Size(_kSettingsDialogMaxWidth, _kSettingsDialogMaxHeight),
-        );
-        await controller.center();
-        await controller.setTitle(getWindowName(overrideType: WindowType.Settings));
+        var frame = const Offset(0, 0) &
+            const Size(_kSettingsDialogMaxWidth, _kSettingsDialogMaxHeight);
+        var frameAlreadyCentered = false;
+        if (isWindows) {
+          final screen = (await window_size.getWindowInfo()).screen;
+          if (screen != null) {
+            frame = computeDpiAwareDialogFrame(
+              visibleFrame: screen.visibleFrame,
+              scaleFactor: screen.scaleFactor,
+              preferredLogicalSize: const Size(
+                _kSettingsDialogMaxWidth,
+                _kSettingsDialogMaxHeight,
+              ),
+            );
+            frameAlreadyCentered = true;
+          }
+        }
+        await controller.setFrame(frame);
+        if (!frameAlreadyCentered) {
+          await controller.center();
+        }
+        final windowTitle =
+            getWindowName(overrideType: WindowType.Settings);
+        await controller.setTitle(windowTitle);
+        if (isWindows &&
+            !setWindowResizableByTitle_(windowTitle, false)) {
+          debugPrint('Failed to disable resizing for the settings window.');
+        }
         await controller.show();
         await controller.focus();
       }();

@@ -1,5 +1,9 @@
 # Windows Release Standard（2026-05-02）
 
+> 历史文档：本文保留 2026-05-02 的渠道设计和实施背景，不再作为执行真源。
+> 当前发布流程、渠道状态和验收门禁以
+> [windows-release-standard.md](windows-release-standard.md) 为准。
+
 这份文档定义 HDesk Windows 桌面端的标准 release 流程，目标是稳定产出正式签名的 Windows 资产，并把更新服务器所需的文件和元数据一次准备完整。
 
 ## 当前渠道决策

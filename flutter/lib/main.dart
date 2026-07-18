@@ -315,7 +315,9 @@ void runSettingsWindow(Map<String, dynamic> argument) async {
     DesktopSettingsWindowPage(initialTabkey: initialTab),
     MyTheme.currentThemeMode(),
   );
-  setResizable(false);
+  if (!isWindows) {
+    setResizable(false);
+  }
 }
 
 void runPasswordWindow(Map<String, dynamic> argument) async {
@@ -325,7 +327,9 @@ void runPasswordWindow(Map<String, dynamic> argument) async {
     const DesktopPasswordWindowPage(),
     MyTheme.currentThemeMode(),
   );
-  setResizable(false);
+  if (!isWindows) {
+    setResizable(false);
+  }
 }
 
 void runMobileApp() async {

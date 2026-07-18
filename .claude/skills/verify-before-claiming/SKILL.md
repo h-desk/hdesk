@@ -25,15 +25,15 @@ description: 当用户询问"某功能是否支持"、"能不能做X"、"X有没
 ```powershell
 # 已知本地仓库
 # RustDesk PC 端：D:\ideas\rustdesk
-# HDesk 鸿蒙端：D:\ohos\hdesk\Application
+# Cross-repository questions may also require D:\ohos\hdesk or
+# D:\ideas\rustdesk-server, but keep each repository's facts in its own docs.
 ```
 
 ### Step 2：grep 关键词
 ```powershell
 # 示例：验证 RustDesk 是否支持 UAC / 安全桌面
-Select-String -Path "D:\ideas\rustdesk\src\**\*.rs" `
-    -Pattern "secure_desktop|uac|elevat|selectInputDesktop|install_service" `
-    -Recurse | Select-Object -First 20 | Format-Table LineNumber, Line
+rg -n "secure_desktop|uac|elevat|selectInputDesktop|install_service" `
+  D:\ideas\rustdesk\src
 ```
 
 ### Step 3：读关键实现
@@ -61,13 +61,14 @@ Select-String -Path "D:\ideas\rustdesk\src\**\*.rs" `
 - `src/server/portable_service.rs` → SYSTEM 权限子进程，检测 `desktop_changed()` 后自动切换
 - `src/platform/windows.rs` → `install_me()` 中 `sc create ... start=auto` 注册 SYSTEM 服务
 
-**结论**：安装即可用，安装时只需一次 UAC 确认，之后开机自动以 SYSTEM 权限运行，可完整操控所有系统弹窗。
+**正确结论边界**：源码证明项目有 secure desktop 和 SYSTEM service 的实现路径，
+但是否在当前包中可用仍需验证安装形态、service `ImagePath`、运行权限和实际 UAC
+交互。不能从“找到源码”直接跳到“当前发布包一定可用”。
 
 ## 适用仓库速查
 
 | 问题类型 | 先搜索的位置 |
 |---------|------------|
 | RustDesk PC 端能力 | `D:\ideas\rustdesk\src\` |
-| HarmonyOS SDK API | `Application\entry\oh_modules\` `.d.ts` 文件 |
-| 云函数能力 | `CloudProgram\cloudfunctions\**\node_modules\` `.d.ts` |
-| hdesk 鸿蒙端当前实现 | `Application\entry\src\` + `Application\rustdesk_core\src\` |
+| RustDesk server | `D:\ideas\rustdesk-server\` |
+| HDesk Harmony client | `D:\ohos\hdesk\Application\` |

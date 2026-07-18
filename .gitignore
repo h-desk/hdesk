@@ -6,6 +6,7 @@
 .idea
 .DS_Store
 .env
+.claude/settings.local.json
 libsciter-gtk.so
 src/ui/inline.rs
 extractor

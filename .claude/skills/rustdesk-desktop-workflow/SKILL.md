@@ -1,6 +1,6 @@
 ---
 name: rustdesk-desktop-workflow
-description: Use when working on the Windows desktop RustDesk repo at D:\ideas\rustdesk, including client-side network/direct-connect fixes, Flutter desktop builds, Windows packaging, and deployment against the custom hdesk.yunjichuangzhi.cn server.
+description: Use when working on the Windows HDesk desktop repo at D:\ideas\rustdesk, including Flutter/Rust development, packaging, crash diagnosis, and release work.
 ---
 
 ## Use This Skill When
@@ -28,14 +28,12 @@ description: Use when working on the Windows desktop RustDesk repo at D:\ideas\r
 
 ## Build Selection
 
-- For fast validation of Rust logic only:
-  - Run `cargo check --lib`.
-- For a Windows Flutter desktop binary without portable packing:
-  - Read [windows-build-and-deploy.md](d:\ohos\hdesk\.claude\skills\rustdesk-desktop-workflow\references\windows-build-and-deploy.md) and use the `skip portable` flow.
-- For a full Windows package deliverable:
-  - Read [windows-build-and-deploy.md](d:\ohos\hdesk\.claude\skills\rustdesk-desktop-workflow\references\windows-build-and-deploy.md) and use the `full package` flow.
-- For remote deployment/testing:
-  - Read [windows-build-and-deploy.md](d:\ohos\hdesk\.claude\skills\rustdesk-desktop-workflow\references\windows-build-and-deploy.md), then confirm the target host/port is reachable before trying to ship artifacts.
+- Rust-only validation: `cargo check --lib`.
+- Windows runner: `python build.py --flutter --skip-portable-pack`.
+- Local packages: `python build.py --flutter`.
+- Build/install validation: `scripts/windows/build-install-validate.ps1`.
+- Never describe a package as released until signing, published metadata, and
+  downloaded artifacts have all been verified.
 
 ## Quick Commands
 
@@ -48,10 +46,13 @@ cargo check --lib
 If `flutter` is not in `PATH`, use the SDK on this machine:
 
 ```powershell
-$env:Path = "D:\software\flutter\bin;$env:Path"
+$env:Path = "D:\software\flutter-3.41.4\bin;$env:Path"
 ```
 
-## Detailed Reference
+## Canonical Documentation
 
-- Windows build, package, and deploy steps:
-  - [windows-build-and-deploy.md](d:\ohos\hdesk\.claude\skills\rustdesk-desktop-workflow\references\windows-build-and-deploy.md)
+- [Windows desktop development](../../../docs/windows-desktop-development.md)
+- [Build and install validation](../../../docs/windows-build-install-validation.md)
+- [Windows release standard](../../../docs/windows-release-standard.md)
+- [Multi-window and crash diagnostics](../../../docs/windows-multi-window-and-crash-diagnostics.md)
+- [Skill compatibility reference](references/windows-build-and-deploy.md)
