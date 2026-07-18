@@ -320,11 +320,11 @@ function Get-InstalledExeCandidates {
     $candidates = @(
         'D:\software\HDesk\hdesk.exe',
         'D:\software\HDesk\HDesk.exe',
-        (Join-Path $env:LOCALAPPDATA 'hdesk\hdesk.exe'),
-        (Join-Path $env:LOCALAPPDATA 'rustdesk\hdesk.exe'),
         (Join-Path $env:ProgramFiles 'HDesk\hdesk.exe'),
         (Join-Path $env:ProgramFiles 'HDesk\HDesk.exe'),
-        (Join-Path $env:ProgramFiles 'RustDesk\rustdesk.exe')
+        (Join-Path $env:ProgramFiles 'RustDesk\rustdesk.exe'),
+        (Join-Path $env:LOCALAPPDATA 'hdesk\hdesk.exe'),
+        (Join-Path $env:LOCALAPPDATA 'rustdesk\hdesk.exe')
     )
 
     return @($candidates | Where-Object { $_ } | Select-Object -Unique)
@@ -370,6 +370,7 @@ try {
     }
 
     $installStartedAt = Get-Date
+    $LASTEXITCODE = 0
     & $installer.FullName --silent-install
     $installerExit = $LASTEXITCODE
 
